@@ -89,7 +89,13 @@ host's library.
 Without the `[ml]` extra the maker still works with `--separator none` (no vocal removal)
 and lyrics you provide; timing then comes from the LRC timestamps or is estimated.
 
-## Deploying the app (Cloudflare, free tier)
+## Hosting (Cloudflare, free tier)
+
+The app, the party rooms (live WebSockets) and file storage all run on Cloudflare: one Worker
+serves the PWA and the API, Durable Objects hold the rooms, R2 stores files. R2 has no
+download fees, and the free tier is plenty for parties with friends.
+
+One-time setup (see the "Go live" issue for the full checklist):
 
 ```bash
 npm install
@@ -97,9 +103,16 @@ npx wrangler login
 npx wrangler r2 bucket create jojos-karaoke-library
 cd room-worker
 openssl rand -base64 32 | npx wrangler secret put MEDIA_SECRET
-npx wrangler secret put SIGNUP_CODE        # optional: only people with the code can create a library
+npx wrangler secret put SIGNUP_CODE        # optional: only people with the code can host / create libraries
 cd .. && npm run deploy                    # builds the PWA, uploads ONNX Runtime to R2, deploys the Worker
 ```
+
+After that, every push to `main` that passes CI deploys automatically
+(`.github/workflows/deploy.yml`) once the repository has the secrets `CLOUDFLARE_API_TOKEN`
+and `CLOUDFLARE_ACCOUNT_ID` and the variable `SITE_URL`.
+
+Custom domain: add the domain to Cloudflare, then uncomment `routes` in
+`room-worker/wrangler.jsonc`. Room creation and uploads are rate limited per IP.
 
 ## Developing
 

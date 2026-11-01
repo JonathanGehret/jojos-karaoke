@@ -8,6 +8,17 @@ export interface Env {
   ASSETS: Fetcher;
   MEDIA_SECRET?: string;
   SIGNUP_CODE?: string;
+  /** Workers rate limiting bindings (optional: missing in tests means "no limit") */
+  CREATE_LIMIT?: RateLimit;
+  UPLOAD_LIMIT?: RateLimit;
+}
+
+/** Per-client limit for abuse-prone calls on a public site. */
+export async function limit(rl: RateLimit | undefined, req: Request, what: string) {
+  if (!rl) return;
+  const ip = req.headers.get('cf-connecting-ip') ?? 'local';
+  const { success } = await rl.limit({ key: `${what}:${ip}` });
+  if (!success) throw new HttpError(429, 'too many requests, try again in a minute');
 }
 
 export class HttpError extends Error {

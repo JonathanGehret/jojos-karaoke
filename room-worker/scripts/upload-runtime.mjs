@@ -11,7 +11,17 @@ const entry = require.resolve('onnxruntime-web', { paths: [join(import.meta.dirn
 const dist = dirname(entry);
 const version = JSON.parse(readFileSync(join(dist, '..', 'package.json'), 'utf8')).version;
 const files = readdirSync(dist).filter((f) => /^ort-wasm-simd-threaded(\.(jsep|asyncify|jspi))?\.(wasm|mjs)$/.test(f));
-const extra = process.argv.slice(2);
+const args = process.argv.slice(2);
+// --skip-if-live <site url>: do nothing when the site already serves this runtime version
+const live = args.indexOf('--skip-if-live');
+if (live >= 0) {
+  const site = args.splice(live, 2)[1]?.replace(/\/$/, '');
+  try {
+    const r = await fetch(`${site}/api/runtime/${version}/ort-wasm-simd-threaded.wasm`, { method: 'HEAD' });
+    if (r.ok) { console.log(`ONNX Runtime ${version} is already live on ${site}`); process.exit(0); }
+  } catch { /* site not up yet: upload */ }
+}
+const extra = args;
 const remote = !extra.includes('--local');
 for (const f of files) {
   const key = `jojos-karaoke-library/runtime/${version}/${f}`;

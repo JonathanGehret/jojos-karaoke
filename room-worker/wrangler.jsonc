@@ -18,6 +18,13 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room", "Accounts"] }],
   "r2_buckets": [{ "binding": "LIBRARY", "bucket_name": "jojos-karaoke-library" }],
+  // per-IP limits for a public site (namespace ids are any unique numbers in your account)
+  "ratelimits": [
+    { "name": "CREATE_LIMIT", "namespace_id": "4101", "simple": { "limit": 5, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "4102", "simple": { "limit": 10, "period": 60 } }
+  ],
+  // Custom domain: uncomment after adding the domain to Cloudflare
+  // "routes": [{ "pattern": "karaoke.example.com", "custom_domain": true }],
   "observability": { "enabled": true }
   // Secrets (wrangler secret put):
   //   MEDIA_SECRET  random string used to sign media URLs (required)

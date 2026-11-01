@@ -1,0 +1,51 @@
+name: Deploy
+# Deploys to Cloudflare after CI passes on main. Needs repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, and the variable SITE_URL
+# (e.g. https://karaoke.example.com). Without the secrets it skips.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: { group: deploy, cancel-in-progress: false }
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SITE_URL: ${{ vars.SITE_URL }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Cloudflare secrets not set yet; skipping deploy (see issue: Go live)."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.skip != '1'
+        with: { ref: "${{ github.event.workflow_run.head_sha || github.sha }}" }
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.skip != '1'
+        with: { node-version: 22, cache: npm }
+      - if: steps.cfg.outputs.skip != '1'
+        run: npm ci && npm run build
+      - name: Upload ONNX Runtime to R2 (only when the version changed)
+        if: steps.cfg.outputs.skip != '1'
+        working-directory: room-worker
+        run: node scripts/upload-runtime.mjs ${SITE_URL:+--skip-if-live "$SITE_URL"}
+      - name: Deploy the Worker
+        if: steps.cfg.outputs.skip != '1'
+        working-directory: room-worker
+        run: npx wrangler deploy
+      - name: Smoke test
+        if: steps.cfg.outputs.skip != '1' && env.SITE_URL != ''
+        run: |
+          curl -fsS "$SITE_URL/" | grep -q "Jojo" && echo "app ok"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/api/me")" = "401" && echo "api ok"

@@ -4,7 +4,7 @@ import { summarize, type Principal } from './accounts';
 import { lookupLyrics, serveModel, serveRuntime } from './assets';
 import { serveMedia } from './media';
 import {
-  Env, FILE_TYPES, accountsOf, HttpError, MAX_FILE_BYTES, ROOM_CODE_RE, SONG_ID_RE, bearer, json, libKey, roomCode,
+  Env, FILE_TYPES, accountsOf, limit, HttpError, MAX_FILE_BYTES, ROOM_CODE_RE, SONG_ID_RE, bearer, json, libKey, roomCode,
 } from './util';
 
 export { Accounts } from './accounts';
@@ -25,6 +25,7 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
 
   // ---- accounts & tokens
   if (p[1] === 'accounts' && m === 'POST') {
+    await limit(env.CREATE_LIMIT, req, 'account');
     const body = (await req.json().catch(() => ({}))) as { name?: string; signupCode?: string };
     if (env.SIGNUP_CODE && body.signupCode !== env.SIGNUP_CODE) throw new HttpError(403, 'wrong signup code');
     const name = String(body.name ?? '').trim().slice(0, 40);
@@ -95,6 +96,7 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
 
   // ---- rooms
   if (p[1] === 'rooms' && !p[2] && m === 'POST') {
+    await limit(env.CREATE_LIMIT, req, 'room');
     // With a library token the room can also use that online library; without one it is a
     // plain party with the songs stored on the host screen's device.
     const body = (await req.json().catch(() => ({}))) as { name?: string; signupCode?: string };
@@ -114,6 +116,7 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
   if (p[1] === 'rooms' && p[2]) {
     const code = p[2].toUpperCase();
     if (!ROOM_CODE_RE.test(code)) throw new HttpError(404, 'room not found');
+    if (m === 'POST' && (p[3] === 'uploads' || p[3] === 'results')) await limit(env.UPLOAD_LIMIT, req, 'upload');
     const headers = new Headers(req.headers);
     headers.delete('x-jojo-owner');
     // Makers authenticate with the room's worker key (checked by the room) or a library token
@@ -131,7 +134,7 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
   }
 
   // ---- browser maker assets
-  if (p[1] === 'runtime' && p.length === 4 && m === 'GET') return serveRuntime(env, p[2], p[3]);
+  if (p[1] === 'runtime' && p.length === 4 && (m === 'GET' || m === 'HEAD')) return serveRuntime(env, p[2], p[3], m === 'HEAD');
   if (p[1] === 'models' && p.length === 3 && m === 'GET') return serveModel(env, ctx, p[2]);
   if (p[1] === 'lyrics' && m === 'GET') {
     await principal(req, env);

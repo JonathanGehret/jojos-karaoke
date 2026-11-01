@@ -15,11 +15,12 @@ export const MODELS: Record<string, string> = {
 
 const immutable = 'public, max-age=31536000, immutable';
 
-export async function serveRuntime(env: Env, version: string, file: string): Promise<Response> {
+export async function serveRuntime(env: Env, version: string, file: string, head = false): Promise<Response> {
   if (!VERSION.test(version) || !RUNTIME_FILE.test(file)) throw new HttpError(404, 'not found');
-  const obj = await env.LIBRARY.get(`runtime/${version}/${file}`);
+  const key = `runtime/${version}/${file}`;
+  const obj = head ? await env.LIBRARY.head(key) : await env.LIBRARY.get(key);
   if (!obj) throw new HttpError(404, `runtime ${version}/${file} is not uploaded (run npm run upload-runtime)`);
-  return new Response(obj.body, { headers: {
+  return new Response(head ? null : (obj as R2ObjectBody).body, { headers: {
     'content-type': file.endsWith('.wasm') ? 'application/wasm' : 'text/javascript',
     'cache-control': immutable, 'content-length': String(obj.size), 'cross-origin-resource-policy': 'same-origin',
     // ONNX Runtime starts its threads as workers from this script; inside a cross-origin
