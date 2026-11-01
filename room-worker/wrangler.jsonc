@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jojos-karaoke",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // The player PWA is served from the same Worker, so API and WebSockets are same-origin.
+  "assets": {
+    "directory": "../player/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "Room" },
+      { "name": "ACCOUNTS", "class_name": "Accounts" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room", "Accounts"] }],
+  "r2_buckets": [{ "binding": "LIBRARY", "bucket_name": "jojos-karaoke-library" }],
+  "observability": { "enabled": true }
+  // Secrets (wrangler secret put):
+  //   MEDIA_SECRET  random string used to sign media URLs (required)
+  //   SIGNUP_CODE   if set, creating a library account requires this code
+}

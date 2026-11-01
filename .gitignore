@@ -16,3 +16,5 @@ out/
 .pytest_cache/
 .ruff_cache/
 uv.lock.bak
+.dev.vars
+player/dist/
