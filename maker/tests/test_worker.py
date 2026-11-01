@@ -18,9 +18,9 @@ def test_worker_processes_one_job(tmp_path, tone, monkeypatch):
 
     uploaded = {}
 
-    class FakeLib:
-        def __init__(self, cfg):
-            pass
+    class FakeRoom:
+        def __init__(self, server, key):
+            assert key == "wk_test"
 
         def download_upload(self, room, upload_id, dst):
             assert (room, upload_id) == ("AB12", "up1")
@@ -28,12 +28,12 @@ def test_worker_processes_one_job(tmp_path, tone, monkeypatch):
                 d.write(s.read())
             return dst
 
-        def upload_package(self, path):
+        def put_result(self, room, job_id, path):
+            assert (room, job_id) == ("AB12", "j1")
+            assert os.path.getsize(path) > 0
             uploaded["path"] = path
-            assert os.path.exists(path)
-            return "nobody-req-abc123"
 
-    monkeypatch.setattr("jojos_karaoke.worker.Library", FakeLib)
+    monkeypatch.setattr("jojos_karaoke.worker.RoomClient", FakeRoom)
     got = []
 
     async def handler(ws):
@@ -48,13 +48,14 @@ def test_worker_processes_one_job(tmp_path, tone, monkeypatch):
     async def main():
         async with websockets.serve(handler, "127.0.0.1", 0) as srv:
             port = srv.sockets[0].getsockname()[1]
-            cfg = Config(server=f"http://127.0.0.1:{port}", token="t")
+            cfg = Config(server=f"http://127.0.0.1:{port}", token=None)
             await asyncio.wait_for(serve("ab12", cfg, Options(separator="none", lookup=False, pitch=False),
-                                         once=True, log=lambda *_: None), 60)
+                                         once=True, log=lambda *_: None, key="wk_test"), 60)
 
     asyncio.run(main())
     types = [m["type"] for m in got]
     assert "job.failed" not in types, got
     assert "job.progress" in types
     done = [m for m in got if m["type"] == "job.done"]
-    assert done == [{"type": "job.done", "jobId": "j1", "songId": "nobody-req-abc123"}]
+    assert len(done) == 1 and done[0]["jobId"] == "j1" and done[0]["songId"].startswith("nobody-req-")
+    assert uploaded["path"]

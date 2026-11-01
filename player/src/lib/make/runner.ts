@@ -1,7 +1,8 @@
 // Process a room's on-the-spot requests in this browser (like `jojo worker --room CODE`).
 
 import type { Job, ServerMsg } from '$shared/protocol';
-import { makeSong, uploadSong } from './pipeline';
+import { exportJkp } from '../localLibrary';
+import { makeSong } from './pipeline';
 
 export interface RunnerEvents {
   onStatus?: (s: string) => void;
@@ -75,8 +76,15 @@ export class BrowserJobRunner {
           if (Date.now() - last > 1000) { last = Date.now(); this.send({ type: 'job.progress', jobId: job.id, stage, pct }); }
         },
       });
-      const id = await uploadSong(this.token, song);
-      this.send({ type: 'job.done', jobId: job.id, songId: id });
+      // the finished package goes back to the room: the screen imports it into its device
+      // library, and the guest who brought the song can download it
+      const pkg = await exportJkp({ id: song.manifest.id, manifest: song.manifest, lyrics: song.lyrics, addedAt: 0, size: 0,
+        files: Object.fromEntries(Object.entries(song.files).map(([n, d]) => [n, new Blob([d as BlobPart])])) });
+      const up = await fetch(`/api/rooms/${this.code}/results/${job.id}`, {
+        method: 'POST', body: pkg as BodyInit, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/zip' },
+      });
+      if (!up.ok) throw new Error(`could not hand the song to the room (${up.status})`);
+      this.send({ type: 'job.done', jobId: job.id, songId: song.manifest.id });
     } catch (e) {
       this.send({ type: 'job.failed', jobId: job.id, error: String((e as Error).message ?? e).slice(0, 200) });
     } finally {

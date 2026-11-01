@@ -35,6 +35,12 @@ export const store = {
     if (token) all[code] = token; else delete all[code];
     set('jk.member', all);
   },
+  workerKey(code: string): string | null { return get<Record<string, string>>('jk.worker', {})[code] ?? null; },
+  setWorkerKey(code: string, key: string) {
+    const all = get<Record<string, string>>('jk.worker', {});
+    all[code] = key;
+    set('jk.worker', all);
+  },
   get recentRooms(): string[] { return get('jk.recentRooms', []); },
   addRecentRoom(code: string) { set('jk.recentRooms', [code, ...this.recentRooms.filter((c) => c !== code)].slice(0, 5)); },
   get vocal(): number { return get('jk.vocal', 0); },

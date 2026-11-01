@@ -29,6 +29,9 @@ commit that fixes them.
 - User text goes in via `textContent` / Svelte text bindings, never `{@html}`.
 - Anything that waits on the network or a worker needs a timeout.
 - The server owns the queue; the screen owns playback (see `spec/protocol.md`).
+- Songs are device-first (`player/src/lib/localLibrary.ts`, IndexedDB). The online library is
+  optional; nothing may require an account to make songs or host a party.
+- Never hand reactive (Svelte `$state`) objects to IndexedDB or `postMessage`; copy to plain data.
 - ONNX Runtime's .wasm is served from R2 (`/api/runtime/<version>/…`, uploaded by
   `room-worker/scripts/upload-runtime.mjs`), never bundled: Workers assets cap files at 25 MB.
   Its responses need COEP/COOP headers or nested workers are blocked in isolated pages.

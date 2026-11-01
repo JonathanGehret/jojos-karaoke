@@ -154,8 +154,13 @@ try {
   check(exit === 0, `maker worker processed the request (exit ${exit})${exit === 0 ? '' : '\n' + workerLog}`);
   await guest.locator('.queue li', { hasText: 'Fresh' }).filter({ hasNotText: 'making' }).waitFor({ timeout: 10000 });
   check(true, 'request became a ready song in the queue');
-  const lib = await api('/api/library/songs', { token });
-  check(lib.songs.some((x) => x.title === 'Fresh'), 'new song is in the library');
+  check(await guest.getByText(/Your karaoke version of/).isVisible(), 'requester is offered their karaoke version');
+  await sleep(1500);
+  const imported = await screen.evaluate(() => new Promise((res) => {
+    const r = indexedDB.open('jojos-karaoke');
+    r.onsuccess = () => { const g = r.result.transaction('songs').objectStore('songs').getAll(); g.onsuccess = () => res(g.result.map((x) => x.manifest.title)); };
+  }));
+  check(imported.includes('Fresh'), 'the screen imported the request into its device songs');
 
   // offline-capable shell: service worker registers
   const sw = await screen.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));

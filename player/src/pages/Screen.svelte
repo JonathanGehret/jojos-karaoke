@@ -9,7 +9,8 @@
   import QueueList from '../components/QueueList.svelte';
   import Toast from '../components/Toast.svelte';
   import { type Media, fetchJson, saveLyrics, songMedia } from '../lib/api';
-  import { AudioEngine, KEY_RANGE, fetchAudio, unlockAudio } from '../lib/audio/engine';
+  import { AudioEngine, KEY_RANGE, decode, fetchAudio, unlockAudio } from '../lib/audio/engine';
+  import { getSong, importJkp, listSongs, onLibraryChange, summary, updateLyrics } from '../lib/localLibrary';
   import { keepAwake, toggleFullscreen } from '../lib/device';
   import { joinUrl, mmss } from '../lib/format';
   import { navigate, takeHashParam } from '../lib/nav.svelte';
@@ -31,6 +32,9 @@
   let started = $state(false);
   let loadedItem = $state<QueueItem | null>(null);
   let media = $state<Media | null>(null);
+  /** where the current song came from */
+  let source = $state<'device' | 'online' | null>(null);
+  let coverUrl = $state<string | null>(null);
   let lyrics = $state<Lyrics | null>(null);
   let rawLyrics: Lyrics | null = null;
   let loading = $state(false);
@@ -54,8 +58,7 @@
 
   function toggleMakingHere() {
     if (runner) { runner.stop(); runner = null; makingHere = false; makingJob = null; return; }
-    if (!store.ownerToken) { say('Sign in to your library on this device first (Library & settings).'); return; }
-    runner = new BrowserJobRunner(code, store.ownerToken, {
+    runner = new BrowserJobRunner(code, admin!, {
       onJob: (j, p) => (makingJob = j ? `${j.title} ${Math.round(p ?? 0)}%` : null),
     });
     runner.start();
@@ -99,6 +102,7 @@
     engine.onEnded = () => { playing = false; publish(); conn?.send({ type: 'advance' }); };
     started = true;
     keepAwake();
+    publishDeviceSongs();
     if (nowItem && nowItem.id !== loadedItem?.id) load(nowItem);
   }
 
@@ -109,22 +113,45 @@
     loadedItem = item;
     lyrics = null;
     media = null;
+    source = null;
     countdown = 0;
     if (!item.songId || !admin) return;
     loading = true;
     try {
-      const m = await songMedia(code, item.songId, { admin });
-      const [inst, voc, lyr] = await Promise.all([
-        fetchAudio(m.urls.instrumental!),
-        m.urls.vocals ? fetchAudio(m.urls.vocals) : Promise.resolve(null),
-        fetchJson<Lyrics>(m.urls.lyrics),
-      ]);
+      // songs on this device first; then a request's finished package; then the online library
+      let local = await getSong(item.songId);
+      if (!local && item.hasResult) local = await importResult(item.id);
+      let inst: AudioBuffer, voc: AudioBuffer | null, lyr: Lyrics, offsetMs: number, m: Media;
+      if (local) {
+        [inst, voc] = await Promise.all([
+          decode(await local.files[local.manifest.files.instrumental].arrayBuffer()),
+          local.manifest.files.vocals ? decode(await local.files[local.manifest.files.vocals].arrayBuffer()) : Promise.resolve(null),
+        ]);
+        lyr = local.lyrics;
+        offsetMs = local.manifest.offsetMs ?? 0;
+        if (coverUrl) URL.revokeObjectURL(coverUrl);
+        const cover = local.manifest.files.cover;
+        coverUrl = cover && local.files[cover] ? URL.createObjectURL(local.files[cover]) : null;
+        m = { manifest: local.manifest, urls: { lyrics: '', ...(coverUrl ? { cover: coverUrl } : {}),
+          ...(local.manifest.files.vocals ? { vocals: 'local' } : {}) } };
+        source = 'device';
+      } else {
+        m = await songMedia(code, item.songId, { admin });
+        [inst, voc, lyr] = await Promise.all([
+          fetchAudio(m.urls.instrumental!),
+          m.urls.vocals ? fetchAudio(m.urls.vocals) : Promise.resolve(null),
+          fetchJson<Lyrics>(m.urls.lyrics),
+        ]);
+        offsetMs = m.manifest.offsetMs ?? 0;
+        source = 'online';
+      }
       if (my !== loadToken) return;
       media = m;
       rawLyrics = lyr;
-      songOffset = m.manifest.offsetMs ?? 0;
+      songOffset = offsetMs;
       offsetDirty = false;
       lyrics = shiftLyrics(lyr, songOffset);
+      sendLyrics();
       engine.load(inst, voc);
       key = 0; rate = 1;
       engine.setKey(0); engine.setRate(1);
@@ -152,15 +179,53 @@
   function setKey(k: number) { key = Math.max(-KEY_RANGE, Math.min(KEY_RANGE, k)); engine.setKey(key); publish(); }
   function setRate(r: number) { rate = Math.round(Math.max(0.8, Math.min(1.2, r)) * 100) / 100; engine.setRate(rate); publish(); }
   function setVocal(v: number) { vocal = v; store.vocal = v; engine.setVocal(v); publish(); }
+  let lyricsTimer = 0;
+  /** Guests get the lyrics from the screen, already shifted by the song's offset. */
+  function sendLyrics() {
+    clearTimeout(lyricsTimer);
+    lyricsTimer = window.setTimeout(() => {
+      if (lyrics && loadedItem) conn?.send({ type: 'lyrics', queueItemId: loadedItem.id, lyrics });
+    }, 150);
+  }
+
+  async function publishDeviceSongs() {
+    if (!started) return;
+    conn?.send({ type: 'screen.library', songs: (await listSongs()).map(summary) });
+  }
+  const offLib = onLibraryChange(publishDeviceSongs);
+  $effect(() => { if (conn?.status === 'open' && started) publishDeviceSongs(); });
+
+  const importing = new Set<string>();
+  async function importResult(itemId: string) {
+    const r = await fetch(`/api/rooms/${code}/results/${itemId}?admin=${encodeURIComponent(admin!)}`);
+    if (!r.ok) throw new Error(`could not fetch the finished request (${r.status})`);
+    return importJkp(new Uint8Array(await r.arrayBuffer()));
+  }
+  // finished requests are copied into this device's songs as soon as they are ready
+  $effect(() => {
+    for (const q of queue) {
+      if (!q.hasResult || !q.songId || importing.has(q.id)) continue;
+      importing.add(q.id);
+      getSong(q.songId).then((have) => have ?? importResult(q.id)).catch((e) => say((e as Error).message));
+    }
+  });
+
   function nudgeOffset(ms: number) {
     if (!rawLyrics) return;
     songOffset += ms;
     offsetDirty = true;
     lyrics = shiftLyrics(rawLyrics, songOffset);
+    sendLyrics();
   }
   async function saveOffset() {
     if (!rawLyrics || !loadedItem?.songId || !admin) return;
     try {
+      if (source === 'device') {
+        await updateLyrics(loadedItem.songId, rawLyrics, songOffset);
+        offsetDirty = false;
+        say('Lyrics offset saved for this song.');
+        return;
+      }
       await saveLyrics(code, loadedItem.songId, admin, rawLyrics, songOffset);
       offsetDirty = false;
       say('Lyrics offset saved for this song.');
@@ -240,6 +305,8 @@
 
   onDestroy(() => {
     off?.();
+    offLib();
+    if (coverUrl) URL.revokeObjectURL(coverUrl);
     runner?.stop();
     conn?.close();
     engine.stop();
@@ -292,6 +359,7 @@
       {:else if !loadedItem}
         <div class="center-card">
           <h2>{upNext ? 'Starting…' : 'Pick a song!'}</h2>
+          {#if !conn?.library.length}<p class="hint">No songs yet: add some in <b>My songs</b> on this device, or guests can bring their own in the Request tab.</p>{/if}
           <p>Scan the QR code or open <b>{location.host}/join</b> and enter <b>{code}</b>.</p>
           <Qr text={joinUrl(code)} size={260} />
         </div>
@@ -327,7 +395,7 @@
             <button onclick={toggleFullscreen}>⛶</button>
             {#if canCast}<button onclick={cast} title="Show on a TV / Chromecast">Cast</button>{/if}
             <button onclick={() => (showAdminQr = !showAdminQr)} title="Control from your phone">📱</button>
-            {#if loadedItem?.songId}<button onclick={() => navigate(`/edit/${code}/${loadedItem!.songId}`)}>Edit timing</button>{/if}
+            {#if loadedItem?.songId && source === 'online'}<button onclick={() => navigate(`/edit/${code}/${loadedItem!.songId}`)}>Edit timing</button>{/if}
           </div>
         </footer>
       {/if}
@@ -355,6 +423,14 @@
         {/if}
         <label class="row"><input type="checkbox" checked={makingHere} onchange={toggleMakingHere} /> Make requests on this device</label>
         {#if makingJob}<p class="hint">Making {makingJob}</p>{/if}
+        {#if store.workerKey(code)}
+          <details>
+            <summary>Let another computer make requests</summary>
+            <p class="hint">On a laptop: open this link (Chrome), or with the CLI:</p>
+            <code class="cmd">{location.origin}/make?room={code}#key={store.workerKey(code)}</code>
+            <code class="cmd">jojo worker --server {location.origin} --room {code} --key {store.workerKey(code)}</code>
+          </details>
+        {/if}
         <details>
           <summary>Room settings</summary>
           <label class="row"><input type="checkbox" checked={conn?.state?.settings.fair}

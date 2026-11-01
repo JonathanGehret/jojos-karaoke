@@ -1,6 +1,7 @@
 // Live connection to a room: state, library, clock sync and reconnects.
 
 import { type ClockSample, estimateOffset, positionAt, sampleFrom } from '$shared/clock';
+import type { Lyrics } from '$shared/lyrics';
 import type { ClientMsg, Member, Playback, RoomState, ServerMsg, SongSummary } from '$shared/protocol';
 import { store } from './store';
 
@@ -20,6 +21,8 @@ export class RoomConnection {
   status = $state<Status>('connecting');
   error = $state<string | null>(null);
   playback = $state<Playback | null>(null);
+  /** lyrics of the song now playing, sent by the screen */
+  lyrics = $state<{ queueItemId: string; lyrics: Lyrics } | null>(null);
   offset = 0;                 // serverTime - Date.now()
   synced = $state(false);
 
@@ -120,6 +123,7 @@ export class RoomConnection {
         break;
       case 'playback': this.playback = m.playback; break;
       case 'library': this.library = m.songs; break;
+      case 'lyrics': this.lyrics = { queueItemId: m.queueItemId, lyrics: m.lyrics }; break;
       case 'pong': {
         this.samples.push(sampleFrom(m.c, m.s, Date.now()));
         if (this.samples.length > 30) this.samples.shift();

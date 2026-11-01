@@ -95,12 +95,17 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
 
   // ---- rooms
   if (p[1] === 'rooms' && !p[2] && m === 'POST') {
-    const me = await principal(req, env);
+    // With a library token the room can also use that online library; without one it is a
+    // plain party with the songs stored on the host screen's device.
+    const body = (await req.json().catch(() => ({}))) as { name?: string; signupCode?: string };
+    const me = bearer(req) ? await principal(req, env) : null;
+    if (!me && env.SIGNUP_CODE && body.signupCode !== env.SIGNUP_CODE) throw new HttpError(403, 'wrong signup code');
+    const ownerName = me?.ownerName ?? (String(body.name ?? '').trim().slice(0, 40) || 'Host');
     for (let i = 0; i < 8; i++) {
       const code = roomCode();
       const stub = env.ROOM.get(env.ROOM.idFromName(code));
       const r = await stub.fetch(new Request(`${url.origin}/api/rooms/${code}/init`, {
-        method: 'POST', body: JSON.stringify({ code, ownerId: me.ownerId, ownerName: me.ownerName }),
+        method: 'POST', body: JSON.stringify({ code, ownerId: me?.ownerId ?? null, ownerName }),
       }));
       if (r.status !== 409) return r;
     }
@@ -111,10 +116,15 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
     if (!ROOM_CODE_RE.test(code)) throw new HttpError(404, 'room not found');
     const headers = new Headers(req.headers);
     headers.delete('x-jojo-owner');
-    // Workers (maker) authenticate with a library token; the room checks it is its owner's library.
-    const isWorkerWs = p[3] === 'ws' && url.searchParams.get('role') === 'worker';
-    const isUploadGet = p[3] === 'uploads' && p[4] && m === 'GET';
-    if (isWorkerWs || isUploadGet) headers.set('x-jojo-owner', (await principal(req, env, url)).ownerId);
+    // Makers authenticate with the room's worker key (checked by the room) or a library token
+    // (checked here; the room compares the owner).
+    const makerCall = (p[3] === 'ws' && url.searchParams.get('role') === 'worker') ||
+      (p[3] === 'uploads' && p[4] && m === 'GET') || (p[3] === 'results' && p[4] && m === 'POST');
+    const t = makerCall ? bearer(req, url) : null;
+    if (t?.startsWith('jk_')) {
+      const who = await accountsOf(env).auth(t);
+      if (who) headers.set('x-jojo-owner', who.ownerId);
+    }
     const fwd = new URL(url);
     fwd.pathname = `/api/rooms/${code}/${p.slice(3).join('/')}`;
     return env.ROOM.get(env.ROOM.idFromName(code)).fetch(new Request(fwd, { method: m, headers, body: req.body }));

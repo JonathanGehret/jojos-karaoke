@@ -29,6 +29,7 @@
     error = null;
     try {
       pkg = readPackage(new Uint8Array(await f.arrayBuffer()));
+      session.localSongId = null;
       await prepare();
     } catch (err) { error = (err as Error).message; }
   }
@@ -60,6 +61,7 @@
   function edit() {
     if (!pkg) return;
     pkg.manifest.offsetMs = offset;
+    if (!session.localPackage || session.localPackage !== pkg) session.localSongId = null;
     session.localPackage = pkg;
     engine.stop();
     navigate('/edit');

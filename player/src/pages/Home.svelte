@@ -9,12 +9,20 @@
   const recent = store.recentRooms.filter((c) => store.adminToken(c));
 
   async function host() {
-    if (!store.ownerToken) return navigate('/settings?setup=1');
     busy = true;
     error = null;
     try {
-      const r = await createRoom(store.ownerToken);
+      let r;
+      try {
+        r = await createRoom(store.ownerToken, store.nickname || undefined);
+      } catch (e) {
+        if ((e as { status?: number }).status !== 403) throw e;
+        const code = prompt('This server needs a signup code to host a party:');
+        if (!code) return;
+        r = await createRoom(store.ownerToken, store.nickname || undefined, code);
+      }
       store.setAdminToken(r.code, r.adminToken);
+      store.setWorkerKey(r.code, r.workerKey);
       store.addRecentRoom(r.code);
       navigate(`/screen/${r.code}`);
     } catch (e) {
@@ -47,16 +55,18 @@
 
   <div class="card">
     <button class="primary big" onclick={host} disabled={busy}>{busy ? 'Starting…' : '🎤 Host a party'}</button>
-    <p class="hint">Open this on the TV or laptop that plays the music. Guests scan the QR code.</p>
+    <p class="hint">Open this on the TV or laptop that plays the music. Its songs (My songs) are offered to the
+      guests, who scan the QR code. No account needed.</p>
     {#if recent.length}
       <p class="hint">Resume: {#each recent as c}<button class="link" onclick={() => navigate(`/screen/${c}`)}>{c}</button> {/each}</p>
     {/if}
   </div>
 
   <div class="row center">
+    <button onclick={() => navigate('/songs')}>🎵 My songs</button>
     <button onclick={() => navigate('/make')}>🎛 Make a song</button>
     <button onclick={() => navigate('/solo')}>Play a .jkp file</button>
-    <button onclick={() => navigate('/settings')}>Library & settings</button>
+    <button onclick={() => navigate('/settings')}>Settings & online library</button>
   </div>
   {#if error}<p class="error">{error}</p>{/if}
 </main>

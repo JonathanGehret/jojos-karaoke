@@ -190,7 +190,7 @@ describe('room', () => {
 
     // a worker needs a library token of the room's owner
     const badWorker = await wsStatus(`/api/rooms/${code}/ws?role=worker&token=nope`);
-    expect(badWorker).toBe(401);
+    expect(badWorker).toBe(403);
     const other = await api('/api/accounts', { method: 'POST', body: JSON.stringify({ name: 'Stranger' }) });
     const strangerWs = await wsStatus(`/api/rooms/${code}/ws?role=worker&token=${other.body.token}`);
     expect(strangerWs).toBe(403);
@@ -244,5 +244,86 @@ describe('room', () => {
     const bad = { version: 1, lines: [{ start: 0, end: 0, words: [{ t: 'a', s: 900, e: 100 }] }] };
     expect((await api(`/api/rooms/${code}/songs/nobody-first-aaaaaa/lyrics?admin=${admin}`, { method: 'PUT', body: JSON.stringify({ lyrics: bad }) })).status).toBe(400);
     expect((await api(`/api/rooms/${code}/songs/nobody-first-aaaaaa/lyrics?admin=nope`, { method: 'PUT', body: JSON.stringify({ lyrics: edited }) })).status).toBe(403);
+  });
+});
+
+describe('rooms without an account (songs on the screen device)', () => {
+  it('screen offers its own songs, relays lyrics, and a request comes back as a downloadable package', async () => {
+    const r = await api('/api/rooms', { method: 'POST', body: JSON.stringify({ name: 'Jo' }) });
+    expect(r.status).toBe(200);
+    const { code: c, adminToken: adm, workerKey } = r.body;
+    expect(workerKey).toMatch(/^wk_/);
+    expect((await api(`/api/rooms/${c}/info`)).body.ownerName).toBe('Jo');
+
+    const screen = new Client(ws(`/api/rooms/${c}/ws?role=screen&token=${adm}`));
+    await screen.next('welcome');
+    expect((await screen.next('library')).songs).toEqual([]);
+    screen.send({ type: 'screen.library', songs: [
+      { id: 'nobody-local-aaaaaa', title: 'Local One', artist: 'Nobody', durationMs: 5000, hasVocals: true, hasPitch: false },
+      { id: 'BAD ID', title: 'x', artist: '', durationMs: 1, hasVocals: false, hasPitch: false },
+    ] });
+    const lib = await screen.next('library', (m) => m.songs.length > 0);
+    expect(lib.songs).toEqual([expect.objectContaining({ id: 'nobody-local-aaaaaa', where: 'screen' })]);
+
+    const bea = new Client(ws(`/api/rooms/${c}/ws?nickname=Bea`));
+    const beaTok = ((await bea.next('welcome')).you as any).token;
+    expect((await bea.next('library')).songs[0].title).toBe('Local One');
+
+    // guests can't publish songs or lyrics
+    bea.send({ type: 'screen.library', songs: [] });
+    expect((await bea.next('error')).message).toBe('screen only');
+
+    bea.send({ type: 'queue.add', songId: 'nobody-local-aaaaaa' });
+    await screen.state((s) => s.queue.length === 1);
+    screen.send({ type: 'advance' });
+    const st = await screen.state((s) => s.nowPlaying?.songId === 'nobody-local-aaaaaa');
+    const lyr = { version: 1, lines: [{ start: 100, end: 900, words: [{ t: 'la', s: 100, e: 900 }] }] };
+    screen.send({ type: 'lyrics', queueItemId: st.nowPlaying.id, lyrics: lyr });
+    expect((await bea.next('lyrics')).lyrics).toEqual(lyr);
+    // late joiners get the current lyrics in their welcome burst
+    const cid = new Client(ws(`/api/rooms/${c}/ws?nickname=Cid`));
+    await cid.next('welcome');
+    expect((await cid.next('lyrics')).queueItemId).toBe(st.nowPlaying.id);
+    // lyrics for a song that isn't playing are ignored
+    screen.send({ type: 'lyrics', queueItemId: 'nope', lyrics: lyr });
+
+    // no online library in this room
+    expect((await api(`/api/rooms/${c}/songs/nobody-local-aaaaaa/media?admin=${adm}`)).status).toBe(404);
+
+    // request processed by a maker using the worker key
+    const up = await api(`/api/rooms/${c}/uploads?member=${beaTok}`, { method: 'POST', body: new Uint8Array(1000).fill(1) });
+    bea.send({ type: 'request.add', title: 'Brought Along', artist: 'Nobody', uploadId: up.body.uploadId });
+    const withReq = await screen.state((s) => s.queue.some((q: any) => q.title === 'Brought Along'));
+    const reqItem = withReq.queue.find((q: any) => q.title === 'Brought Along');
+    expect(await wsStatus(`/api/rooms/${c}/ws?role=worker&token=wk_wrong`)).toBe(403);
+    const w = new Client(ws(`/api/rooms/${c}/ws?role=worker&token=${workerKey}`));
+    await w.next('welcome');
+    w.send({ type: 'job.claim' });
+    const job = (await w.next('job', (m) => !!m.job)).job!;
+    expect((await api(`/api/rooms/${c}/uploads/${job.uploadId}`, { token: workerKey })).status).toBe(200);
+    expect((await api(`/api/rooms/${c}/uploads/${job.uploadId}`, { token: beaTok })).status).toBe(403);
+
+    // job.done without a result is refused
+    w.send({ type: 'job.done', jobId: job.id, songId: 'nobody-brought-along-bbbbbb' });
+    expect((await w.next('error')).message).toMatch(/not uploaded/);
+    const pkg = new Uint8Array(3000).fill(9);
+    expect((await api(`/api/rooms/${c}/results/${job.id}`, { method: 'POST', body: pkg, token: beaTok })).status).toBe(403);
+    expect((await api(`/api/rooms/${c}/results/${job.id}`, { method: 'POST', body: pkg, token: workerKey })).status).toBe(200);
+    w.send({ type: 'job.done', jobId: job.id, songId: 'nobody-brought-along-bbbbbb' });
+    const done = await screen.state((s) => s.queue.find((q: any) => q.id === reqItem.id)?.status === 'ready');
+    expect(done.queue.find((q: any) => q.id === reqItem.id)).toMatchObject({ songId: 'nobody-brought-along-bbbbbb', hasResult: true });
+
+    // the requester and the host can download the package; others can't
+    const mine = await api(`/api/rooms/${c}/results/${reqItem.id}?member=${beaTok}`);
+    expect(mine.status).toBe(200);
+    expect(new Uint8Array(mine.body)).toEqual(pkg);
+    expect((await api(`/api/rooms/${c}/results/${job.id}?admin=${adm}`)).status).toBe(200);
+    const cidTok = ((await new Promise<any>((res) => { const x = new Client(ws(`/api/rooms/${c}/ws?nickname=Dee`)); x.next('welcome').then((m) => { res(m); x.close(); }); })).you).token;
+    expect((await api(`/api/rooms/${c}/results/${reqItem.id}?member=${cidTok}`)).status).toBe(403);
+
+    // closing the room deletes the results
+    expect((await api(`/api/rooms/${c}/close?admin=${adm}`, { method: 'POST' })).status).toBe(200);
+    expect((await api(`/api/rooms/${c}/info`)).status).toBe(404);
+    screen.close(); bea.close(); cid.close(); w.close();
   });
 });

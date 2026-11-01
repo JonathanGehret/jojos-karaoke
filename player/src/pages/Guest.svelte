@@ -2,12 +2,13 @@
   // A guest's phone: join with a nickname, see synced lyrics, pick songs, request new ones.
   // With the host token (from the host's 📱 QR or after casting) it is also the remote control.
   import { onDestroy } from 'svelte';
-  import { type Lyrics, shiftLyrics } from '$shared/lyrics';
+  import type { Lyrics } from '$shared/lyrics';
   import { REACTIONS, cleanNickname } from '$shared/protocol';
   import LyricsView from '../components/LyricsView.svelte';
   import QueueList from '../components/QueueList.svelte';
   import Toast from '../components/Toast.svelte';
-  import { fetchJson, roomInfo, songMedia, uploadForRequest } from '../lib/api';
+  import { roomInfo, uploadForRequest } from '../lib/api';
+  import { downloadBytes, importJkp } from '../lib/localLibrary';
   import { keepAwake, vibrate } from '../lib/device';
   import { mmss } from '../lib/format';
   import { navigate, takeHashParam } from '../lib/nav.svelte';
@@ -27,8 +28,7 @@
   let conn = $state<RoomConnection | null>(null);
   let tab = $state<'lyrics' | 'songs' | 'queue' | 'request' | 'host'>('songs');
   let search = $state('');
-  let lyrics = $state<Lyrics | null>(null);
-  let lyricsFor = '';
+
   let toast = $state<string | null>(null);
   let alerted = '';
 
@@ -70,32 +70,32 @@
   const songs = $derived((conn?.library ?? []).filter((s) =>
     (s.title + ' ' + s.artist).toLowerCase().includes(search.trim().toLowerCase())));
 
-  // switch to lyrics when a song starts; alert the singer
+  // the screen sends the lyrics of the song it plays
+  const lyrics = $derived<Lyrics | null>(conn?.lyrics && conn.lyrics.queueItemId === now?.id ? conn.lyrics.lyrics : null);
+  let shownFor = '';
   $effect(() => {
     const id = now?.id ?? '';
-    if (id && id !== lyricsFor) {
-      lyricsFor = id;
-      lyrics = null;
-      tab = 'lyrics';
-      loadLyrics();
-    }
-    if (!id) { lyricsFor = ''; lyrics = null; }
+    if (id && id !== shownFor) { shownFor = id; tab = 'lyrics'; }
   });
+
+  const myResults = $derived((st?.queue ?? []).concat(now ? [now] : []).filter((q) => q.hasResult && q.memberId === you?.id));
+  async function fetchResult(itemId: string): Promise<Uint8Array> {
+    const r = await fetch(`/api/rooms/${code}/results/${itemId}?member=${encodeURIComponent(conn?.memberToken ?? '')}`);
+    if (!r.ok) throw new Error('could not download it');
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  async function keep(it: { id: string; title: string; artist: string }, how: 'download' | 'save') {
+    try {
+      const b = await fetchResult(it.id);
+      if (how === 'download') downloadBytes(b, `${[it.artist, it.title].filter(Boolean).join(' - ') || 'song'}.jkp`);
+      else { await importJkp(b); say('Saved in My songs on this phone.'); }
+    } catch (e) { say((e as Error).message); }
+  }
   $effect(() => {
     const k = myTurn ? `turn:${now?.id}` : iAmNext ? `next:${nextUp?.id}` : '';
     if (k && k !== alerted) { alerted = k; vibrate(myTurn ? [200, 100, 200, 100, 400] : [150, 80, 150]); }
   });
 
-  async function loadLyrics() {
-    if (!now?.songId || !conn) return;
-    const id = now.id;
-    try {
-      const m = await songMedia(code, now.songId, { admin, member: conn.memberToken });
-      const l = await fetchJson<Lyrics>(m.urls.lyrics);
-      if (lyricsFor !== id) return;
-      lyrics = shiftLyrics(l, m.manifest.offsetMs ?? 0);
-    } catch (e) { say((e as Error).message); }
-  }
 
   const clock = () => (conn ? conn.songPosition() - store.deviceOffsetMs : 0);
 
@@ -206,6 +206,11 @@
 
       {:else if tab === 'queue'}
         {#if now}<p class="muted">Now: <b>{now.title}</b> · {now.nickname}</p>{/if}
+        {#each myResults as r (r.id)}
+          <p class="card">Your karaoke version of <b>{r.title}</b> is ready.
+            <button class="small" onclick={() => keep(r, 'download')}>Download .jkp</button>
+            <button class="small" onclick={() => keep(r, 'save')}>Save in My songs</button></p>
+        {/each}
         <QueueList items={st?.queue ?? []} youId={you?.id} admin={!!admin}
           onmove={(id, to) => conn?.send({ type: 'queue.move', itemId: id, to })}
           onremove={(id) => conn?.send({ type: 'queue.remove', itemId: id })}
@@ -213,8 +218,8 @@
 
       {:else if tab === 'request'}
         <form class="stack" onsubmit={request}>
-          <p class="hint">Not in the library? Upload your own copy of the song and it will be turned into karaoke
-            during the party.</p>
+          <p class="hint">Not in the list? Upload your own copy of the song: it is turned into karaoke during the
+            party, and you can download the karaoke version afterwards.</p>
           {#if !st?.workersOnline}
             <p class="hint warn">No device is making songs right now. Your request will wait until the host
               turns on “Make requests on this device” or a friend helps from <b>Make a song</b>.</p>

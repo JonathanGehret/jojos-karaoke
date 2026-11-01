@@ -170,12 +170,16 @@ def cmd_upload(a) -> int:
 
 
 def cmd_worker(a) -> int:
+    from .config import Config
     from .pipeline import Options
     from .worker import serve
 
     opts = Options(separator=a.separator, device=a.device, language=a.lang)
+    cfg = Config.load()
+    if a.server:
+        cfg.server = a.server.rstrip("/")
     try:
-        asyncio.run(serve(a.room, base_opts=opts, once=a.once))
+        asyncio.run(serve(a.room, cfg, base_opts=opts, once=a.once, key=a.key, to_library=a.library))
     except KeyboardInterrupt:
         pass
     return 0
@@ -237,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     w = sub.add_parser("worker", help="process on-the-spot song requests for a room")
     w.add_argument("--room", required=True)
+    w.add_argument("--key", help="the room's helper key (shown on the host screen); not needed after `jojo login`")
+    w.add_argument("--server", help="app URL (default: from `jojo login`)")
+    w.add_argument("--library", action="store_true", help="also add each song to your online library")
     w.add_argument("--separator", default="auto", choices=["auto", "roformer", "demucs", "fast", "none"])
     w.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
     w.add_argument("--lang")

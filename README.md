@@ -11,26 +11,36 @@ Turn songs you own into karaoke, then sing them together.
   and shows a QR code; guests scan it, pick a nickname, queue songs, request new ones, and
   see the lyrics in sync on their phone.
 - **Room server** (`room-worker/`): Cloudflare Worker + Durable Objects + R2. Rooms, queue,
-  clock sync, the private online song library, and on-the-spot processing jobs.
+  clock sync, on-the-spot processing jobs, and an optional private online library.
+
+**Your songs live on your device.** Every song you make is saved in the app (*My songs*,
+browser storage) and can be downloaded as a `.jkp` file, imported elsewhere, or (optionally)
+uploaded to an online library. No account is needed to make songs or host a party.
 
 Design and decisions: [docs/DESIGN.md](docs/DESIGN.md). Protocol: [spec/protocol.md](spec/protocol.md).
 
-Only use audio you own. Songs, stems and lyrics are copyrighted: the library is private to
-its owner, the makers they invite and their party guests. It is never public.
+Only use audio you own. Songs, stems and lyrics are copyrighted: they stay on your devices
+(and, if you choose, in your private online library). Guests at a party only receive the
+lyrics of the song being sung; a guest's own request is kept by the server only until the
+room closes.
 
 ---
 
 ## Using it
 
-1. **Host**: open the app on the TV/laptop → *Library & settings* → create your library.
-   → *Host a party* → *Start the party*.
-2. **Guests**: scan the QR code (or open `/join` and type the 4-letter code), enter a
+1. **Make songs**: *Make a song* in the app (Chrome on a laptop/desktop) saves them in *My
+   songs* on that device. Songs made with the CLI (`jojo make song.mp3`) can be imported there
+   as `.jkp` files.
+2. **Host**: on the TV/laptop that has the songs → *Host a party* → *Start the party*. Its
+   songs are offered to the guests.
+3. **Guests**: scan the QR code (or open `/join` and type the 4-letter code), enter a
    nickname, tap songs to queue them. When it's your turn your phone buzzes.
-3. **Add songs**: *Make a song* in the app (Chrome on a laptop/desktop), or on a computer
-   with the CLI below: `jojo make song.mp3 --upload`.
-4. **Songs on the spot**: a guest uploads their own copy in the *Request* tab. The host
-   ticks *Make requests on this device* in the queue panel (or a friend opens *Make a song →
-   Help at a party*, or runs `jojo worker --room CODE`); the song joins the queue when ready.
+4. **Bring your own song**: a guest uploads their copy in the *Request* tab. The host ticks
+   *Make requests on this device* in the queue panel (or another laptop opens the helper link
+   shown there, or runs `jojo worker --room CODE --key …`). When it's ready it joins the queue,
+   the screen keeps it, and the guest can download it or save it in *My songs* on their phone.
+5. **Optional online library** (*Settings*): sync songs between your devices and let friends add
+   songs with their own token (`jojo make … --upload`).
 
 Host screen keys: Space play/pause · N skip · ←/→ seek · +/− key · [ ] tempo · V guide
 vocal · F fullscreen · Q queue · , . lyrics offset. The 📱 button shows a QR to control
@@ -68,7 +78,7 @@ jojo login --server https://<your-app> --token <token from Library & settings>
 jojo make song.mp3 --upload               # lyrics: looked up on LRCLIB, else transcribed
 jojo make song.mp3 --lyrics song.txt      # or .lrc; "A: …"/"B: …" prefixes + --duets for duets
 jojo make song.mp3 --video                # also an MP4 with the word wipe
-jojo worker --room K7Q2                   # make guests' requests during a party
+jojo worker --room K7Q2 --key wk_…        # make guests' requests during a party (key shown on the host screen)
 ```
 
 The first run downloads the models (a few hundred MB). Expect roughly 1–3 minutes per song on

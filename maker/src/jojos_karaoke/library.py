@@ -66,8 +66,36 @@ class Library:
                   "application/json")
         return sid
 
+
+
+class RoomClient:
+    """What a worker needs from a room. Authenticates with the room's helper key (shown on the
+    host screen) or a library token."""
+
+    def __init__(self, server: str, key: str):
+        if not key:
+            raise LibraryError("Need the room's helper key (--key, shown on the host screen) or `jojo login`.")
+        self.server = server.rstrip("/")
+        self.key = key
+
+    def _req(self, method: str, path: str, body: bytes | None = None, ctype: str | None = None, timeout: float = 300):
+        req = urllib.request.Request(self.server + path, data=body, method=method)
+        req.add_header("Authorization", f"Bearer {self.key}")
+        if ctype:
+            req.add_header("Content-Type", ctype)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                return r.read()
+        except urllib.error.HTTPError as e:
+            raise LibraryError(f"{method} {path}: HTTP {e.code} {e.read().decode('utf-8', 'replace')[:300]}") from None
+        except OSError as e:
+            raise LibraryError(f"{method} {path}: {e}") from None
+
     def download_upload(self, room: str, upload_id: str, dst: str) -> str:
-        data = self._req("GET", f"/api/rooms/{room}/uploads/{upload_id}", timeout=300)
         with open(dst, "wb") as f:
-            f.write(data)
+            f.write(self._req("GET", f"/api/rooms/{room}/uploads/{upload_id}"))
         return dst
+
+    def put_result(self, room: str, job_id: str, pkg_path: str) -> None:
+        with open(pkg_path, "rb") as f:
+            self._req("POST", f"/api/rooms/{room}/results/{job_id}", f.read(), "application/zip")

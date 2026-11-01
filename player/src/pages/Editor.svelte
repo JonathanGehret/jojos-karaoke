@@ -7,6 +7,7 @@
   import { AudioEngine, decode, fetchAudio, unlockAudio } from '../lib/audio/engine';
   import { mmss } from '../lib/format';
   import { bufferOf, writePackage } from '../lib/jkp';
+  import { downloadBytes, fileName, updateLyrics } from '../lib/localLibrary';
   import * as E from '../lib/lyrics/edit';
   import { navigate } from '../lib/nav.svelte';
   import { session } from '../lib/session';
@@ -234,13 +235,13 @@
         pkg.lyrics = clean;
         pkg.manifest.offsetMs = offset;
         if (pkg.manifest.lyricsSource === 'none' && clean.lines.length) pkg.manifest.lyricsSource = 'user';
-        const blob = new Blob([writePackage(pkg) as BlobPart], { type: 'application/zip' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${pkg.manifest.id}.jkp`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        status = 'Downloaded the updated package.';
+        if (session.localSongId) {
+          await updateLyrics(session.localSongId, clean, offset);
+          status = 'Saved on this device.';
+        } else {
+          downloadBytes(writePackage(pkg), fileName(pkg.manifest));
+          status = 'Downloaded the updated package.';
+        }
       }
       dirty = false;
       setTimeout(() => (status = null), 3000);
@@ -261,6 +262,7 @@
   <header class="bar">
     <button class="link" onclick={back}>← Back</button>
     <h2>Edit timing{#if manifest}: {manifest.title}{/if}</h2>
+    {#if !code && session.localPackage}<button onclick={() => { const p = session.localPackage!; p.lyrics = E.normalize(lyrics!); p.manifest.offsetMs = offset; downloadBytes(writePackage(p), fileName(p.manifest)); }}>Download .jkp</button>{/if}
     <button class="primary" onclick={save} disabled={!dirty && offset === (manifest?.offsetMs ?? 0)}>Save</button>
   </header>
   {#if status}<p class="hint">{status}</p>{/if}

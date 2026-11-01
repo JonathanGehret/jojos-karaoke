@@ -41,7 +41,8 @@ export interface Media {
 export const signUp = (name: string, signupCode?: string) =>
   api<{ ownerId: string; token: string }>('/api/accounts', { method: 'POST', body: JSON.stringify({ name, signupCode }) });
 export const me = (token: string) => api<{ name: string; role: string; ownerName: string }>('/api/me', { token });
-export const createRoom = (token: string) => api<{ code: string; adminToken: string }>('/api/rooms', { method: 'POST', token });
+export const createRoom = (token: string | null, name?: string, signupCode?: string) =>
+  api<{ code: string; adminToken: string; workerKey: string }>('/api/rooms', { method: 'POST', token, body: JSON.stringify({ name, signupCode }) });
 export const roomInfo = (code: string) => api<{ code: string; ownerName: string }>(`/api/rooms/${code}/info`);
 export const librarySongs = (token: string) => api<{ songs: SongSummary[] }>('/api/library/songs', { token });
 export const deleteSong = (token: string, id: string) => api(`/api/library/songs/${id}`, { method: 'DELETE', token });

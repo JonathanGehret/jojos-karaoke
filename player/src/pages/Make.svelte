@@ -5,7 +5,8 @@
   import type { Lyrics } from '$shared/lyrics';
   import LyricsView from '../components/LyricsView.svelte';
   import { AudioEngine, decode, unlockAudio } from '../lib/audio/engine';
-  import { bufferOf, writePackage } from '../lib/jkp';
+  import { bufferOf } from '../lib/jkp';
+  import { downloadBytes, exportJkp, fileName, saveSong } from '../lib/localLibrary';
   import { canEncodeOpus } from '../lib/make/encode';
   import { type MadeSong, SEPARATION_MODEL, guessFromFilename, makeSong, makerWorker, uploadSong } from '../lib/make/pipeline';
   import { BrowserJobRunner } from '../lib/make/runner';
@@ -15,6 +16,7 @@
   const params = new URLSearchParams(location.search);
   const modelUrl = params.get('model') ?? undefined;        // advanced/testing override
   const token = store.ownerToken;
+  const helperKey = new URLSearchParams(location.hash.slice(1)).get('key');   // from the host's "Help make songs" link
 
   let gpu = $state<boolean | null>(null);
   let opusOk = $state<boolean | null>(null);
@@ -32,6 +34,8 @@
   let error = $state<string | null>(null);
   let result = $state<MadeSong | null>(null);
   let uploaded = $state<string | null>(null);
+  let saved = $state(false);
+  let alsoOnline = $state(false);
   let ctl: AbortController | null = null;
   let t0 = 0;
   let eta = $state<number | null>(null);
@@ -56,7 +60,7 @@
   function pick(e: Event) {
     file = (e.target as HTMLInputElement).files?.[0] ?? null;
     if (file && !title) ({ title, artist } = guessFromFilename(file.name));
-    result = null; uploaded = null; error = null;
+    result = null; uploaded = null; saved = false; error = null;
   }
 
   const STAGES: Record<string, string> = {
@@ -67,7 +71,7 @@
   async function make(e: Event) {
     e.preventDefault();
     if (!file) return;
-    busy = true; error = null; result = null; uploaded = null; pct = 0; eta = null;
+    busy = true; error = null; result = null; uploaded = null; saved = false; pct = 0; eta = null;
     ctl = new AbortController();
     t0 = performance.now();
     try {
@@ -80,7 +84,9 @@
           eta = p > 12 && s !== 'download' ? Math.round((el * (100 - p)) / p) : null;
         },
       });
-      if (token) uploaded = await uploadSong(token, result);
+      await saveSong(result.manifest, result.lyrics, result.files);
+      saved = true;
+      if (token && alsoOnline) uploaded = await uploadSong(token, result);
       await preview();
     } catch (err) {
       if ((err as Error).name !== 'AbortError') error = (err as Error).message;
@@ -108,22 +114,19 @@
     playing = engine.playing;
   }
 
-  function download() {
+  async function download() {
     if (!result) return;
-    const bytes = writePackage({ manifest: result.manifest, lyrics: result.lyrics, pitch: null,
-      files: { ...result.files } });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/zip' }));
-    a.download = `${result.manifest.id}.jkp`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    const bytes = await exportJkp({ id: result.manifest.id, manifest: result.manifest, lyrics: result.lyrics, addedAt: 0, size: 0,
+      files: Object.fromEntries(Object.entries(result.files).map(([n, d]) => [n, new Blob([d as BlobPart])])) });
+    downloadBytes(bytes, fileName(result.manifest));
   }
 
   function help(e: Event) {
     e.preventDefault();
-    if (!token) return;
+    const key = helperKey ?? token;
+    if (!key) return;
     runner?.stop();
-    runner = new BrowserJobRunner(roomCode.trim().toUpperCase(), token, {
+    runner = new BrowserJobRunner(roomCode.trim().toUpperCase(), key, {
       onStatus: (s) => (runnerStatus = s),
       onJob: (j, p, s) => (runnerJob = j ? `${j.title}: ${STAGES[s ?? ''] ?? s} ${Math.round(p ?? 0)}%` : null),
     }, { modelUrl, asr: asrOn });
@@ -144,10 +147,6 @@
     {:else}⚠ No WebGPU here: it works on the CPU but can take 10+ minutes per song. Chrome on a laptop/desktop is fastest.{/if}
     {#if opusOk === false}<br /><span class="error">This browser can't save Opus audio (needs Chrome, Edge or a recent Safari/Firefox).</span>{/if}
   </p>
-  {#if !token}
-    <p class="warn">Not signed in to a library: you can still make and download songs.
-      <button class="link" onclick={() => navigate('/settings')}>Sign in</button> to add them to your library.</p>
-  {/if}
 
   <form class="card stack" onsubmit={make}>
     <label>Song file (one you own)<input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pick} disabled={busy} /></label>
@@ -167,6 +166,7 @@
         </select></label>
       <label class="row"><input type="checkbox" bind:checked={separateOn} disabled={busy} /> Remove vocals</label>
       <label class="row"><input type="checkbox" bind:checked={asrOn} disabled={busy} /> AI word timing</label>
+      {#if token}<label class="row"><input type="checkbox" bind:checked={alsoOnline} disabled={busy} /> Also add to my online library</label>{/if}
     </div>
     {#if busy}
       <div class="progress-block">
@@ -186,21 +186,24 @@
     <section class="card">
       <h3>{result.manifest.title} <span class="muted">{result.manifest.artist}</span></h3>
       {#each result.warnings as w}<p class="hint warn">{w}</p>{/each}
-      {#if uploaded}<p class="ok">✓ Added to your library.</p>{/if}
+      {#if saved}<p class="ok">✓ Saved on this device (My songs).</p>{/if}
+      {#if uploaded}<p class="ok">✓ Added to your online library.</p>{/if}
       {#if previewLyrics}<LyricsView lyrics={previewLyrics} clock={() => engine.positionMs()} size="phone" />{/if}
       <div class="row">
         <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'} Preview</button>
         <label class="row">Guide vocal <input type="range" min="0" max="1" step="0.1" value="0"
           oninput={(e) => engine.setVocal(+(e.target as HTMLInputElement).value)} style="width:8em" /></label>
         <button onclick={download}>Download .jkp</button>
+        <button onclick={() => navigate('/songs')}>My songs</button>
       </div>
     </section>
   {/if}
 
-  {#if token}
+  {#if helperKey || token}
     <section class="card">
       <h3>Help at a party</h3>
-      <p class="hint">Make the songs guests request, on this device. Keep this tab open while the party runs.</p>
+      <p class="hint">Make the songs guests request, on this device. Keep this tab open while the party runs.
+        The host's screen gets each finished song, and the guest who brought it can download it.</p>
       <form class="row" onsubmit={help}>
         <input bind:value={roomCode} maxlength="4" placeholder="Room code" style="width:7em; text-transform:uppercase" />
         <button type="submit">{runner ? 'Restart' : 'Start'}</button>

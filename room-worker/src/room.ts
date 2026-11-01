@@ -16,9 +16,13 @@ interface Upload { id: string; memberId: string; size: number; at: number }
 
 interface Stored {
   code: string;
-  ownerId: string;
+  ownerId: string | null;          // null: a room without an online library (songs from the screen's device)
   ownerName: string;
   adminHash: string;
+  workerHash: string;              // "worker key": lets a maker process requests, nothing else
+  localSongs: SongSummary[];       // songs stored on the screen's device
+  currentLyrics: { queueItemId: string; lyrics: Lyrics } | null;
+  results: { jobId: string; queueItemId: string; memberId: string; size: number }[];
   createdAt: number;
   lastActive: number;
   members: StoredMember[];
@@ -33,6 +37,8 @@ interface Stored {
 }
 
 interface Attachment { memberId: string; role: Role }
+
+const SONG_ID = /^[a-z0-9][a-z0-9-]{2,63}$/;
 
 const idlePlayback = (): Playback => ({
   state: 'stopped', positionMs: 0, atServerMs: 0, rate: 1, key: 0, vocal: 0,
@@ -76,7 +82,9 @@ export class Room extends DurableObject<Env> {
     }
     if (a === 'ws') return this.openSocket(req, url);
     if (a === 'uploads' && !b && req.method === 'POST') return this.upload(req, url);
-    if (a === 'uploads' && b && req.method === 'GET') return this.downloadUpload(req, b);
+    if (a === 'uploads' && b && req.method === 'GET') return this.downloadUpload(req, url, b);
+    if (a === 'results' && b && req.method === 'POST') return this.putResult(req, url, b);
+    if (a === 'results' && b && req.method === 'GET') return this.getResult(url, b);
     if (a === 'songs' && b && c === 'media' && req.method === 'GET') return this.media(url, b);
     if (a === 'songs' && b && c === 'lyrics' && req.method === 'PUT') return this.saveLyrics(req, url, b);
     if (a === 'close' && req.method === 'POST') {
@@ -87,18 +95,31 @@ export class Room extends DurableObject<Env> {
     throw new HttpError(404, 'not found');
   }
 
-  private async init(body: { code: string; ownerId: string; ownerName: string }): Promise<Response> {
+  private async init(body: { code: string; ownerId: string | null; ownerName: string }): Promise<Response> {
     if (this.s && Date.now() - this.s.lastActive < LIMITS.roomIdleMs) throw new HttpError(409, 'room code in use');
     if (this.s) await this.destroy();
     const adminToken = randomToken();
+    const workerKey = `wk_${randomToken(12)}`;
     this.s = {
-      code: body.code, ownerId: body.ownerId, ownerName: body.ownerName, adminHash: await sha256(adminToken),
+      code: body.code, ownerId: body.ownerId ?? null, ownerName: body.ownerName, adminHash: await sha256(adminToken),
+      workerHash: await sha256(workerKey), localSongs: [], currentLyrics: null, results: [],
       createdAt: Date.now(), lastActive: Date.now(), members: [], banned: [], queue: [], nowPlaying: null,
       playback: idlePlayback(), settings: { fair: true, maxPerPerson: LIMITS.queuePerPersonDefault },
       jobs: [], uploads: [], history: [],
     };
     await this.save();
-    return json({ code: body.code, adminToken });
+    return json({ code: body.code, adminToken, workerKey });
+  }
+
+  /** A maker may work for this room: worker key, host token, or a library token of the owner. */
+  private async isWorker(req: Request, url: URL): Promise<boolean> {
+    const s = this.s!;
+    if (s.ownerId && req.headers.get('x-jojo-owner') === s.ownerId) return true;
+    const h = req.headers.get('authorization');
+    const t = h?.startsWith('Bearer ') ? h.slice(7).trim() : url.searchParams.get('key') ?? url.searchParams.get('token');
+    if (!t) return false;
+    const th = await sha256(t);
+    return th === s.workerHash || th === s.adminHash;
   }
 
   private async isAdmin(token: string | null | undefined): Promise<boolean> {
@@ -124,7 +145,7 @@ export class Room extends DurableObject<Env> {
     let memberToken: string | null = null;
 
     if (roleQ === 'worker') {
-      if (req.headers.get('x-jojo-owner') !== s.ownerId) throw new HttpError(403, 'not a maker for this library');
+      if (!(await this.isWorker(req, url))) throw new HttpError(403, 'not a maker for this room');
       role = 'worker';
     } else if (roleQ === 'screen' || roleQ === 'admin') {
       await this.requireAdmin(url.searchParams.get('token'));
@@ -155,7 +176,10 @@ export class Room extends DurableObject<Env> {
     const you: Member & { token?: string } = { id: member.id, nickname: member.nickname, role, online: true };
     if (memberToken) you.token = memberToken;
     this.sendTo(server, { type: 'welcome', you, state: this.state() });
-    this.sendTo(server, { type: 'library', songs: this.library });
+    this.sendTo(server, { type: 'library', songs: this.mergedLibrary() });
+    if (s.currentLyrics && s.currentLyrics.queueItemId === s.nowPlaying?.id) {
+      this.sendTo(server, { type: 'lyrics', ...s.currentLyrics });
+    }
     this.broadcastState();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -176,22 +200,59 @@ export class Room extends DurableObject<Env> {
     return json({ uploadId: id });
   }
 
-  private async downloadUpload(req: Request, id: string): Promise<Response> {
-    if (req.headers.get('x-jojo-owner') !== this.s!.ownerId) throw new HttpError(403, 'not a maker for this library');
+  private async downloadUpload(req: Request, url: URL, id: string): Promise<Response> {
+    if (!(await this.isWorker(req, url))) throw new HttpError(403, 'not a maker for this room');
     const obj = await this.env.LIBRARY.get(`uploads/${this.s!.code}/${id}`);
     if (!obj) throw new HttpError(404, 'upload not found');
     return new Response(obj.body, { headers: { 'content-type': 'application/octet-stream' } });
   }
 
+  /** The finished package of a request (.jkp), kept until the room closes. */
+  private async putResult(req: Request, url: URL, jobId: string): Promise<Response> {
+    if (!(await this.isWorker(req, url))) throw new HttpError(403, 'not a maker for this room');
+    const s = this.s!;
+    const job = s.jobs.find((j) => j.id === jobId);
+    if (!job) throw new HttpError(404, 'job not found');
+    const item = s.queue.find((q) => q.id === job.queueItemId) ?? (s.nowPlaying?.id === job.queueItemId ? s.nowPlaying : null);
+    if (!item) throw new HttpError(404, 'request is no longer queued');
+    const len = Number(req.headers.get('content-length') || 0);
+    if (!len) throw new HttpError(411, 'content-length required');
+    if (len > LIMITS.resultBytes) throw new HttpError(413, 'package too large');
+    await this.env.LIBRARY.put(`rooms/${s.code}/results/${jobId}.jkp`, req.body!, { httpMetadata: { contentType: 'application/zip' } });
+    s.results = s.results.filter((r) => r.jobId !== jobId);
+    s.results.push({ jobId, queueItemId: item.id, memberId: item.memberId, size: len });
+    await this.touch();
+    return json({ ok: true });
+  }
+
+  /** Host (to import it) or the guest who requested it (to keep it) can download a result. */
+  private async getResult(url: URL, idOrItem: string): Promise<Response> {
+    const s = this.s!;
+    const r = s.results.find((x) => x.jobId === idOrItem || x.queueItemId === idOrItem);
+    if (!r) throw new HttpError(404, 'not found');
+    const admin = await this.isAdmin(url.searchParams.get('admin'));
+    const m = admin ? null : await this.memberByToken(url.searchParams.get('member'));
+    if (!admin && m?.id !== r.memberId) throw new HttpError(403, 'only the host and the person who requested it can download it');
+    const obj = await this.env.LIBRARY.get(`rooms/${s.code}/results/${r.jobId}.jkp`);
+    if (!obj) throw new HttpError(404, 'not found');
+    const item = s.queue.find((q) => q.id === r.queueItemId) ?? s.nowPlaying;
+    const name = (item?.title ?? 'song').replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 60) || 'song';
+    return new Response(obj.body, { headers: {
+      'content-type': 'application/zip', 'content-length': String(obj.size),
+      'content-disposition': `attachment; filename="${encodeURIComponent(name)}.jkp"`,
+    } });
+  }
+
   private async media(url: URL, songId: string): Promise<Response> {
+    if (!this.s!.ownerId) throw new HttpError(404, 'this room has no online library');
     const admin = await this.isAdmin(url.searchParams.get('admin'));
     const m = admin ? null : await this.memberByToken(url.searchParams.get('member'));
     if (!admin && !m) throw new HttpError(403, 'join the room first');
-    const manifest = await accountsOf(this.env).getSong(this.s!.ownerId, songId);
+    const manifest = await accountsOf(this.env).getSong(this.s!.ownerId!, songId);
     if (!manifest) throw new HttpError(404, 'song not found');
     const origin = url.origin;
     const v = manifest.version ?? 0;
-    const sign = (f: string) => signedMediaUrl(this.env, origin, this.s!.ownerId, songId, f, v);
+    const sign = (f: string) => signedMediaUrl(this.env, origin, this.s!.ownerId!, songId, f, v);
     const files = manifest.files as Record<string, string>;
     // Guests only need lyrics (+ pitch for scoring); audio is for the screen.
     const out: Record<string, string> = { lyrics: await sign(files.lyrics) };
@@ -220,6 +281,7 @@ export class Room extends DurableObject<Env> {
       ln.start = ln.words[0].s;
       ln.end = ln.words[ln.words.length - 1].e;
     }
+    if (!this.s!.ownerId) throw new HttpError(404, 'this room has no online library');
     const acc = accountsOf(this.env);
     const manifest = await acc.getSong(this.s!.ownerId, songId);
     if (!manifest) throw new HttpError(404, 'song not found');
@@ -231,7 +293,7 @@ export class Room extends DurableObject<Env> {
     if (manifest.lyricsSource === 'none' && l.lines.length) manifest.lyricsSource = 'user';
     await acc.putSong(this.s!.ownerId, manifest);
     await this.refreshLibrary(true);
-    this.broadcast({ type: 'library', songs: this.library });
+    this.broadcast({ type: 'library', songs: this.mergedLibrary() });
     return json({ ok: true, version: manifest.version });
   }
 
@@ -239,10 +301,11 @@ export class Room extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     if (!this.s) return ws.close(4404, 'room closed');
-    if (typeof raw !== 'string' || raw.length > 65536) return;
+    const att = ws.deserializeAttachment() as Attachment;
+    const max = att?.role === 'screen' ? LIMITS.lyricsMsgBytes : 65536;
+    if (typeof raw !== 'string' || raw.length > max) return;
     let msg: ClientMsg;
     try { msg = JSON.parse(raw); } catch { return; }
-    const att = ws.deserializeAttachment() as Attachment;
     const me = this.s.members.find((m) => m.id === att.memberId);
     if (!me || this.s.banned.includes(me.id)) return ws.close(4403, 'removed');
     try {
@@ -264,7 +327,7 @@ export class Room extends DurableObject<Env> {
 
       case 'queue.add': {
         await this.refreshLibrary();
-        const song = this.library.find((x) => x.id === msg.songId);
+        const song = this.mergedLibrary().find((x) => x.id === msg.songId);
         if (!song) throw new HttpError(404, 'song not in the library');
         this.checkQuota(me, admin);
         this.insert({
@@ -371,6 +434,7 @@ export class Room extends DurableObject<Env> {
         }
         const i = s.queue.findIndex((q) => q.status === 'ready');
         s.nowPlaying = i >= 0 ? s.queue.splice(i, 1)[0] : null;
+        s.currentLyrics = null;
         s.playback = { ...idlePlayback(), key: 0, vocal: s.playback.vocal,
           queueItemId: s.nowPlaying?.id ?? null, songId: s.nowPlaying?.songId ?? null };
         break;
@@ -384,6 +448,28 @@ export class Room extends DurableObject<Env> {
         times.push(now);
         this.reactions.set(me.id, times);
         this.broadcast({ type: 'react', emoji: msg.emoji, nickname: me.nickname }, (a) => a.role === 'screen');
+        return;
+      }
+
+      case 'screen.library': {
+        need(att.role === 'screen', 'screen only');
+        const songs = Array.isArray(msg.songs) ? msg.songs.slice(0, LIMITS.screenSongs) : [];
+        s.localSongs = songs.filter((x) => x && typeof x.id === 'string' && SONG_ID.test(x.id)).map((x) => ({
+          id: x.id, title: String(x.title ?? '').slice(0, 200) || x.id, artist: String(x.artist ?? '').slice(0, 200),
+          durationMs: Math.max(0, Math.round(+x.durationMs || 0)), hasVocals: !!x.hasVocals, hasPitch: false,
+          ...(x.language ? { language: String(x.language).slice(0, 16) } : {}), where: 'screen' as const,
+        }));
+        await this.touch();
+        this.broadcast({ type: 'library', songs: this.mergedLibrary() });
+        return;
+      }
+
+      case 'lyrics': {
+        need(att.role === 'screen', 'screen only');
+        if (msg.queueItemId !== s.nowPlaying?.id || !msg.lyrics || !Array.isArray(msg.lyrics.lines)) return;
+        s.currentLyrics = { queueItemId: msg.queueItemId, lyrics: msg.lyrics };
+        await this.save();
+        this.broadcast({ type: 'lyrics', queueItemId: msg.queueItemId, lyrics: msg.lyrics }, (a) => a.memberId !== me.id);
         return;
       }
 
@@ -418,16 +504,19 @@ export class Room extends DurableObject<Env> {
       case 'job.done': {
         const job = s.jobs.find((j) => j.id === msg.jobId && j.workerId === me.id);
         if (!job) return;
+        const hasResult = s.results.some((r) => r.jobId === job.id);
         await this.refreshLibrary(true);
-        const song = this.library.find((x) => x.id === msg.songId);
-        if (!song) throw new HttpError(400, 'song was not uploaded to the library');
+        const online = this.library.find((x) => x.id === msg.songId);
+        if (!hasResult && !online) throw new HttpError(400, 'the song was not uploaded (room result or library)');
+        if (!SONG_ID.test(String(msg.songId))) throw new HttpError(400, 'bad song id');
         job.state = 'done';
         this.setItem(job.queueItemId, {
-          songId: song.id, title: song.title, artist: song.artist, status: 'ready', progress: undefined,
+          songId: msg.songId, title: online?.title ?? job.title, artist: online?.artist ?? job.artist, status: 'ready',
+          progress: undefined, hasResult,
         });
         await this.deleteUpload(job.uploadId);
         s.jobs = s.jobs.filter((j) => j !== job);
-        this.broadcast({ type: 'library', songs: this.library });
+        this.broadcast({ type: 'library', songs: this.mergedLibrary() });
         break;
       }
 
@@ -523,9 +612,18 @@ export class Room extends DurableObject<Env> {
   }
 
   private async refreshLibrary(force = false) {
+    if (!this.s!.ownerId) { this.library = []; return; }
     if (!force && Date.now() - this.libraryAt < 30_000) return;
-    this.library = await accountsOf(this.env).listSongs(this.s!.ownerId);
+    this.library = (await accountsOf(this.env).listSongs(this.s!.ownerId)).map((x) => ({ ...x, where: 'online' as const }));
     this.libraryAt = Date.now();
+  }
+
+  /** Songs guests can pick: the screen's own songs first, then the online library. */
+  private mergedLibrary(): SongSummary[] {
+    const local = this.s!.localSongs ?? [];
+    const ids = new Set(local.map((x) => x.id));
+    return [...local, ...this.library.filter((x) => !ids.has(x.id))]
+      .sort((a, b) => (a.artist + a.title).localeCompare(b.artist + b.title));
   }
 
   private socketsOf(memberId: string): WebSocket[] {
@@ -584,6 +682,7 @@ export class Room extends DurableObject<Env> {
   private async destroy() {
     if (!this.s) return;
     for (const u of this.s.uploads) await this.env.LIBRARY.delete(`uploads/${this.s.code}/${u.id}`);
+    for (const r of this.s.results ?? []) await this.env.LIBRARY.delete(`rooms/${this.s.code}/results/${r.jobId}.jkp`);
     for (const w of this.ctx.getWebSockets()) w.close(4404, 'room closed');
     await this.ctx.storage.deleteAll();
     this.s = null;
