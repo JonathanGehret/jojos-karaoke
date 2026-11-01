@@ -13,3 +13,6 @@ __pycache__/
 *.m4a
 *.jkp
 out/
+.pytest_cache/
+.ruff_cache/
+uv.lock.bak

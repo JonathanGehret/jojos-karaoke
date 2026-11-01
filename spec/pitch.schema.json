@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jojos-karaoke/spec/pitch.schema.json",
+  "title": "Reference vocal pitch contour",
+  "type": "object",
+  "required": ["version", "hopMs", "midi"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "hopMs": { "type": "integer", "minimum": 1 },
+    "midi": {
+      "type": "array",
+      "description": "MIDI note number per hop (fractional, 1 decimal), null when unvoiced",
+      "items": { "type": ["number", "null"] }
+    }
+  }
+}

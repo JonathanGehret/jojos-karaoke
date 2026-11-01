@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "id": "example-song-1a2b",
+  "title": "Example Song",
+  "artist": "Nobody",
+  "durationMs": 10000,
+  "language": "en",
+  "lyricsSource": "user",
+  "files": { "instrumental": "instrumental.opus", "vocals": "vocals.opus", "lyrics": "lyrics.json" }
+}

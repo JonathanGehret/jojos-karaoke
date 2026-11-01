@@ -1,0 +1,57 @@
+[project]
+name = "jojos-karaoke"
+version = "0.1.0"
+description = "Turn songs you own into karaoke packages: vocal removal, timed lyrics, video."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+  "jsonschema>=4.21",
+  "numpy>=1.26",
+  "websockets>=13",
+]
+
+[project.optional-dependencies]
+# The AI models. Kept optional so the core installs anywhere in seconds.
+ml = [
+  "audio-separator[cpu]>=0.30",
+  "demucs>=4.0.1",
+  "faster-whisper>=1.1",
+  "ctc-forced-aligner>=0.3",
+]
+gpu = [
+  "audio-separator[gpu]>=0.30",
+  "demucs>=4.0.1",
+  "faster-whisper>=1.1",
+  "ctc-forced-aligner>=0.3",
+]
+
+[project.scripts]
+jojo = "jojos_karaoke.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jojos_karaoke"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../spec" = "jojos_karaoke/spec"
+
+[tool.hatch.build.targets.sdist.force-include]
+"../spec" = "spec"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+per-file-ignores = { "src/jojos_karaoke/video.py" = ["E501"], "tests/*" = ["E501"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

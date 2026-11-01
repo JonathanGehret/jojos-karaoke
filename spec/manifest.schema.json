@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jojos-karaoke/spec/manifest.schema.json",
+  "title": "Jojo's Karaoke package manifest",
+  "type": "object",
+  "required": ["formatVersion", "id", "title", "artist", "durationMs", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "formatVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "artist": { "type": "string", "maxLength": 200 },
+    "durationMs": { "type": "integer", "minimum": 1 },
+    "language": { "type": "string", "maxLength": 16 },
+    "lyricsSource": { "enum": ["user", "lrclib", "transcribed", "none"] },
+    "offsetMs": { "type": "integer", "description": "Per-song lyrics offset; positive = lyrics later" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "maker": { "type": "string", "description": "Maker version and separation model" },
+    "files": {
+      "type": "object",
+      "required": ["instrumental", "lyrics"],
+      "additionalProperties": false,
+      "properties": {
+        "instrumental": { "const": "instrumental.opus" },
+        "vocals": { "const": "vocals.opus" },
+        "lyrics": { "const": "lyrics.json" },
+        "pitch": { "const": "pitch.json" },
+        "cover": { "enum": ["cover.jpg", "cover.png"] }
+      }
+    }
+  }
+}

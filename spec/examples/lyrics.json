@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "singers": { "A": "Lead", "B": "Duet" },
+  "lines": [
+    { "start": 1000, "end": 3000, "singer": "A", "words": [
+      { "t": "la", "s": 1000, "e": 1500 }, { "t": "la", "s": 1500, "e": 2000 }, { "t": "lu", "s": 2000, "e": 3000 } ] },
+    { "start": 6000, "end": 8000, "singer": "B", "words": [
+      { "t": "do", "s": 6000, "e": 6600 }, { "t": "re", "s": 6600, "e": 7300, "lowConfidence": true }, { "t": "mi", "s": 7300, "e": 8000 } ] }
+  ]
+}
