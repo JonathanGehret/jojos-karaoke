@@ -1,6 +1,7 @@
 // HTTP entry: library API, room routing, signed media. Everything else is the PWA (assets).
 
 import { summarize, type Principal } from './accounts';
+import { lookupLyrics, serveModel, serveRuntime } from './assets';
 import { serveMedia } from './media';
 import {
   Env, FILE_TYPES, accountsOf, HttpError, MAX_FILE_BYTES, ROOM_CODE_RE, SONG_ID_RE, bearer, json, libKey, roomCode,
@@ -18,7 +19,7 @@ async function principal(req: Request, env: Env, url?: URL): Promise<Principal> 
   return p;
 }
 
-async function route(req: Request, env: Env, url: URL): Promise<Response> {
+async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const p = url.pathname.split('/').filter(Boolean); // ['api', ...]
   const m = req.method;
 
@@ -119,6 +120,14 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return env.ROOM.get(env.ROOM.idFromName(code)).fetch(new Request(fwd, { method: m, headers, body: req.body }));
   }
 
+  // ---- browser maker assets
+  if (p[1] === 'runtime' && p.length === 4 && m === 'GET') return serveRuntime(env, p[2], p[3]);
+  if (p[1] === 'models' && p.length === 3 && m === 'GET') return serveModel(env, ctx, p[2]);
+  if (p[1] === 'lyrics' && m === 'GET') {
+    await principal(req, env);
+    return lookupLyrics(url);
+  }
+
   // ---- media (signed)
   if (p[1] === 'media' && p.length === 5 && (m === 'GET' || m === 'HEAD')) {
     return serveMedia(req, env, url, p[2], p[3], p[4]);
@@ -127,11 +136,11 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
     try {
-      return await route(req, env, url);
+      return await route(req, env, url, ctx);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
       console.error(e);

@@ -216,8 +216,8 @@
           <p class="hint">Not in the library? Upload your own copy of the song and it will be turned into karaoke
             during the party.</p>
           {#if !st?.workersOnline}
-            <p class="hint warn">No computer is making songs right now. Your request will wait until the host
-              or a friend runs <code>jojo worker --room {code}</code>.</p>
+            <p class="hint warn">No device is making songs right now. Your request will wait until the host
+              turns on “Make requests on this device” or a friend helps from <b>Make a song</b>.</p>
           {/if}
           <input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pickFile} required />
           <input bind:value={reqTitle} placeholder="Title" maxlength="120" required />

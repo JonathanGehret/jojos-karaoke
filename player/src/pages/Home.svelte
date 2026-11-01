@@ -54,6 +54,7 @@
   </div>
 
   <div class="row center">
+    <button onclick={() => navigate('/make')}>🎛 Make a song</button>
     <button onclick={() => navigate('/solo')}>Play a .jkp file</button>
     <button onclick={() => navigate('/settings')}>Library & settings</button>
   </div>

@@ -15,6 +15,7 @@
   import { navigate, takeHashParam } from '../lib/nav.svelte';
   import { RoomConnection } from '../lib/room.svelte';
   import { store } from '../lib/store';
+  import { BrowserJobRunner } from '../lib/make/runner';
 
   let { code }: { code: string } = $props();
 
@@ -47,6 +48,19 @@
   let toast = $state<string | null>(null);
   let reactions = $state<{ id: number; emoji: string; x: number; nickname: string }[]>([]);
   let loadToken = 0;
+  let runner: BrowserJobRunner | null = null;
+  let makingHere = $state(false);
+  let makingJob = $state<string | null>(null);
+
+  function toggleMakingHere() {
+    if (runner) { runner.stop(); runner = null; makingHere = false; makingJob = null; return; }
+    if (!store.ownerToken) { say('Sign in to your library on this device first (Library & settings).'); return; }
+    runner = new BrowserJobRunner(code, store.ownerToken, {
+      onJob: (j, p) => (makingJob = j ? `${j.title} ${Math.round(p ?? 0)}%` : null),
+    });
+    runner.start();
+    makingHere = true;
+  }
   let hideTimer = 0;
   let advanceTimer = 0;
 
@@ -226,6 +240,7 @@
 
   onDestroy(() => {
     off?.();
+    runner?.stop();
     conn?.close();
     engine.stop();
     clearInterval(posTimer);
@@ -335,8 +350,11 @@
           onremove={(id) => conn?.send({ type: 'queue.remove', itemId: id })}
           onplaynext={(id) => conn?.send({ type: 'queue.playNext', itemId: id })} />
         {#if queue.some((q) => q.status === 'processing') && !conn?.state?.workersOnline}
-          <p class="hint warn">Requests are waiting for a computer to make them: run <code>jojo worker --room {code}</code>.</p>
+          <p class="hint warn">Requests are waiting to be made: turn on “Make requests here”, open
+            <b>Make a song → Help at a party</b> on another laptop, or run <code>jojo worker --room {code}</code>.</p>
         {/if}
+        <label class="row"><input type="checkbox" checked={makingHere} onchange={toggleMakingHere} /> Make requests on this device</label>
+        {#if makingJob}<p class="hint">Making {makingJob}</p>{/if}
         <details>
           <summary>Room settings</summary>
           <label class="row"><input type="checkbox" checked={conn?.state?.settings.fair}

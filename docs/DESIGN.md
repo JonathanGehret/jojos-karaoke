@@ -9,6 +9,7 @@
 | Can guests request songs that aren't in the library? | **Yes, on the spot.** A guest requests a song (and uploads their own copy of the audio from their phone); a processing worker on the host's or a friend's machine picks the job up and the song joins the queue when ready. |
 | Player stack | **TypeScript + Svelte 5 + Vite + vite-plugin-pwa.** Small bundles, no virtual DOM, fast. The lyric highlight runs in its own `requestAnimationFrame` loop outside the framework. |
 | Key/tempo | **SoundTouch AudioWorklet** (`@soundtouchjs/audio-worklet`, actively maintained). Tempo via the source `playbackRate`, which the worklet compensates so the key stays put. (The planned Rubber Band WASM port hasn't been updated since 2022.) |
+| Browser maker (#26) | **ONNX Runtime Web** (WebGPU, WASM fallback) runs the UVR MDX-Net Inst HQ 3 model with our own STFT/chunking (`player/src/lib/make/mdx.ts`, verified against a Python reference); **transformers.js Whisper** gives word timestamps; **WebCodecs** encodes Opus into a hand-written Ogg muxer. The runtime's .wasm files (> 25 MB) live in R2 and the model is cached in R2 from its GitHub release, both served same-origin by the Worker. Pages are cross-origin isolated (COOP/COEP credentialless) for multi-threaded WASM. |
 | Queue authority | **The room server** owns the queue (fair insertion, limits); **the screen** owns playback. Simpler and safer than the host sending the full queue. |
 | Rust? | Not for now (see below). |
 

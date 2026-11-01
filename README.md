@@ -2,8 +2,11 @@
 
 Turn songs you own into karaoke, then sing them together.
 
-- **Maker** (`maker/`, Python): song in → vocals removed, lyrics timed word by word → karaoke
-  package (`.jkp`), optional MP4. Runs on your own computer (or a friend's).
+- **Maker**: song in → vocals removed, lyrics timed word by word → karaoke package (`.jkp`).
+  Two ways to run it:
+  - **In the browser** (*Make a song* in the app): nothing to install, uses the graphics card
+    through WebGPU. Can also make guests' requests during a party.
+  - **Python CLI** (`maker/`): best quality (RoFormer models), MP4 videos, batch jobs.
 - **Player** (`player/`, Svelte PWA): the host screen (TV/laptop in Chrome) plays the music
   and shows a QR code; guests scan it, pick a nickname, queue songs, request new ones, and
   see the lyrics in sync on their phone.
@@ -23,16 +26,29 @@ its owner, the makers they invite and their party guests. It is never public.
    → *Host a party* → *Start the party*.
 2. **Guests**: scan the QR code (or open `/join` and type the 4-letter code), enter a
    nickname, tap songs to queue them. When it's your turn your phone buzzes.
-3. **Add songs** on a computer (below): `jojo make song.mp3 --upload`.
-4. **Songs on the spot**: a guest uploads their own copy in the *Request* tab. Any computer
-   running `jojo worker --room CODE` makes it while the party goes on; it joins the queue
-   when ready.
+3. **Add songs**: *Make a song* in the app (Chrome on a laptop/desktop), or on a computer
+   with the CLI below: `jojo make song.mp3 --upload`.
+4. **Songs on the spot**: a guest uploads their own copy in the *Request* tab. The host
+   ticks *Make requests on this device* in the queue panel (or a friend opens *Make a song →
+   Help at a party*, or runs `jojo worker --room CODE`); the song joins the queue when ready.
 
 Host screen keys: Space play/pause · N skip · ←/→ seek · +/− key · [ ] tempo · V guide
 vocal · F fullscreen · Q queue · , . lyrics offset. The 📱 button shows a QR to control
 the room from your own phone; *Cast* sends the screen to a TV (Chrome).
 
-## Installing the maker (you and your friends)
+## Making songs in the browser
+
+*Make a song* runs vocal removal (UVR MDX-Net Inst HQ 3) and word timing (Whisper, via
+transformers.js) inside Chrome. The models download once (≈ 67 MB plus 40–250 MB for
+Whisper) and stay in the browser cache.
+
+- With a graphics card (WebGPU: Chrome/Edge on a laptop or desktop): roughly 1–3 minutes per song.
+- Without WebGPU it runs on the CPU: an 8-second clip took ~40 s in testing, so expect 10+ minutes for a song.
+- Phones are too slow for this; use a laptop.
+- Lyrics: pasted, looked up on LRCLIB, or transcribed. English uses `whisper-tiny.en`, other
+  languages `whisper-small`.
+
+## Installing the CLI maker (you and your friends)
 
 You need **ffmpeg** and **uv** (a one-file Python installer):
 
@@ -72,7 +88,7 @@ npx wrangler r2 bucket create jojos-karaoke-library
 cd room-worker
 openssl rand -base64 32 | npx wrangler secret put MEDIA_SECRET
 npx wrangler secret put SIGNUP_CODE        # optional: only people with the code can create a library
-cd .. && npm run deploy                    # builds the PWA and deploys the Worker
+cd .. && npm run deploy                    # builds the PWA, uploads ONNX Runtime to R2, deploys the Worker
 ```
 
 ## Developing
@@ -85,7 +101,8 @@ npm run build && npm run dev               # app + API on http://localhost:8787
 npm test                                   # player unit tests + room server integration
 npm run typecheck
 (cd maker && uv run pytest && uv run ruff check src tests)
-npm run test:e2e                           # headless Chromium: host + guest + maker worker
+npm run test:e2e                           # headless Chromium: party + CLI worker, and the browser maker
+JOJO_E2E_REAL_MODEL=1 node player/e2e/maker.mjs   # same, with the real 67 MB separation model
 ```
 
 The e2e test needs Playwright's Chromium and `uv`; it skips without Playwright unless

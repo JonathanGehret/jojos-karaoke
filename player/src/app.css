@@ -167,3 +167,8 @@ ol.lines .acts { display: flex; flex-wrap: wrap; gap: .3rem; width: 100%; paddin
   .screen .side { display: none; }
   .top .now { display: none; }
 }
+
+/* make */
+.make .progress-block .meter { height: 10px; background: #ffffff22; border-radius: 6px; overflow: hidden; margin-bottom: .4rem; }
+.make .progress-block .meter div { height: 100%; background: var(--accent); transition: width .4s; }
+.ok { color: var(--ok); }

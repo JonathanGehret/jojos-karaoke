@@ -1,11 +1,17 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defaultClientConditions, defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  resolve: { alias: { $shared: fileURLToPath(new URL('../shared', import.meta.url)) } },
+  resolve: {
+    alias: { $shared: fileURLToPath(new URL('../shared', import.meta.url)) },
+    // ONNX Runtime: load its .wasm from /api/runtime (R2) instead of bundling 25+ MB files
+    conditions: ['onnxruntime-web-use-extern-wasm', ...defaultClientConditions],
+  },
+  worker: { format: 'es' },
   server: {
+    headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless' },
     fs: { allow: ['..'] },
     proxy: { '/api': { target: 'http://127.0.0.1:8787', ws: true } },
   },
@@ -16,6 +22,9 @@ export default defineConfig({
       // App shell only. Songs stream from the online library and are never cached here.
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
+        // the browser maker (ONNX Runtime + transformers.js) loads on demand, not for every guest
+        globIgnores: ['**/make.worker-*.js', '**/transformers*.js', '**/ort*.js'],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [],

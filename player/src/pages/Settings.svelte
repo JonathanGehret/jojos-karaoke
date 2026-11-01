@@ -139,9 +139,9 @@
       </form>
     </section>
     <section class="card">
-      <h3>Already have a library?</h3>
+      <h3>Already have a library or a friend's token?</h3>
       <form onsubmit={usePasted} class="stack">
-        <input bind:value={pasted} placeholder="Paste your owner token" autocomplete="off" />
+        <input bind:value={pasted} placeholder="Paste your token (owner or friend)" autocomplete="off" />
         <button type="submit">Use this token</button>
       </form>
     </section>
@@ -178,7 +178,8 @@
     <section class="card">
       <h3>Songs ({songs.length})</h3>
       {#if !songs.length}
-        <p class="hint">No songs yet. On your computer: <code>jojo make song.mp3 --upload</code></p>
+        <p class="hint">No songs yet. <button class="link" onclick={() => navigate('/make')}>Make one in the browser</button>
+          or on your computer: <code>jojo make song.mp3 --upload</code></p>
       {:else}
         <input bind:value={filter} placeholder="Search" />
         <ul class="songs">

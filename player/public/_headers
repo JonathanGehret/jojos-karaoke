@@ -1,0 +1,5 @@
+# Cross-origin isolation lets the browser maker use all CPU cores (SharedArrayBuffer).
+# "credentialless" still allows the CORS downloads of the speech model.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless

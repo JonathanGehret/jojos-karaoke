@@ -7,12 +7,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:e2e": "node e2e/run.mjs",
+    "test:e2e": "node e2e/run.mjs && node e2e/maker.mjs",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "@soundtouchjs/audio-worklet": "^2.1.1",
     "fflate": "^0.8.3",
+    "onnxruntime-web": "^1.31.0-dev.20260914-8d85527a0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

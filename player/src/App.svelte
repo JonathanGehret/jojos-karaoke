@@ -6,6 +6,7 @@
   import Solo from './pages/Solo.svelte';
   import Editor from './pages/Editor.svelte';
   import Settings from './pages/Settings.svelte';
+  import Make from './pages/Make.svelte';
 
   const m = $derived(route.path.match(/^\/(join|screen|edit)\/([A-Za-z0-9]{4})(?:\/([a-z0-9-]+))?\/?$/));
 </script>
@@ -20,6 +21,8 @@
   <Editor />
 {:else if route.path === '/solo'}
   <Solo />
+{:else if route.path === '/make'}
+  <Make />
 {:else if route.path === '/settings'}
   <Settings />
 {:else}
