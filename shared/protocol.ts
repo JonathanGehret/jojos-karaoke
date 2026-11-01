@@ -73,7 +73,6 @@ export type ClientMsg =
   | { type: 'settings'; settings: Partial<RoomSettings> }          // admin
   | { type: 'kick'; memberId: string }                             // admin
   | { type: 'react'; emoji: string }
-  | { type: 'score'; queueItemId: string; value: number; final: boolean }
   | { type: 'job.claim' }                                          // worker
   | { type: 'job.progress'; jobId: string; stage: string; pct: number; etaS?: number }
   | { type: 'job.done'; jobId: string; songId: string }
@@ -89,7 +88,6 @@ export type ServerMsg =
   | { type: 'control.set'; key?: number; vocal?: number; rate?: number }
   | { type: 'library'; songs: SongSummary[] }
   | { type: 'react'; emoji: string; nickname: string }
-  | { type: 'score'; queueItemId: string; value: number; final: boolean; nickname: string }
   | { type: 'job'; job: Job | null }
   | { type: 'error'; message: string }
   | { type: 'kicked' };

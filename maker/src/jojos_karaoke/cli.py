@@ -28,7 +28,7 @@ def cmd_make(a) -> int:
 
     opts = Options(lyrics_path=a.lyrics, title=a.title, artist=a.artist, language=a.lang,
                    separator=a.separator, model=a.model, device=a.device, lookup=not a.no_lookup,
-                   allow_transcribe=not a.no_transcribe, pitch=not a.no_pitch, duets=a.duets,
+                   allow_transcribe=not a.no_transcribe, pitch=a.pitch, duets=a.duets,
                    video=a.video, video_background=a.background, out_dir=a.out)
     for src in a.songs:
         print(f"♪ {src}")
@@ -197,7 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
     m.add_argument("--no-lookup", action="store_true", help="don't look lyrics up on LRCLIB")
     m.add_argument("--no-transcribe", action="store_true")
-    m.add_argument("--no-pitch", action="store_true", help="skip the pitch contour used for scoring")
+    m.add_argument("--pitch", action="store_true", help="also store the vocal pitch contour (for future scoring)")
     m.add_argument("--duets", action="store_true", help='plain lyrics use "A: …" / "B: …" singer prefixes')
     m.add_argument("--video", action="store_true", help="also render an MP4")
     m.add_argument("--background", help="image for the video background")

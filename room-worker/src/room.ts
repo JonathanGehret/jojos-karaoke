@@ -195,7 +195,6 @@ export class Room extends DurableObject<Env> {
     const files = manifest.files as Record<string, string>;
     // Guests only need lyrics (+ pitch for scoring); audio is for the screen.
     const out: Record<string, string> = { lyrics: await sign(files.lyrics) };
-    if (files.pitch) out.pitch = await sign(files.pitch);
     if (files.cover) out.cover = await sign(files.cover);
     if (admin) {
       out.instrumental = await sign(files.instrumental);
@@ -385,14 +384,6 @@ export class Room extends DurableObject<Env> {
         times.push(now);
         this.reactions.set(me.id, times);
         this.broadcast({ type: 'react', emoji: msg.emoji, nickname: me.nickname }, (a) => a.role === 'screen');
-        return;
-      }
-
-      case 'score': {
-        if (s.nowPlaying?.id !== msg.queueItemId || s.nowPlaying.memberId !== me.id) return;
-        const value = Math.max(0, Math.min(100, Math.round(+msg.value || 0)));
-        this.broadcast({ type: 'score', queueItemId: msg.queueItemId, value, final: !!msg.final, nickname: me.nickname },
-          (a) => a.role === 'screen' || a.role === 'admin');
         return;
       }
 

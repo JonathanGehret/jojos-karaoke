@@ -25,11 +25,11 @@ Types: `shared/protocol.ts` (source of truth). Transport: JSON over one WebSocke
 
 Client → server: `ping`, `queue.add`, `queue.remove`, `queue.move`*, `queue.playNext`*,
 `request.add`, `control`*, `control.set`*, `playback`†, `advance`†, `settings`*, `kick`*,
-`react`, `score` (only the current singer), `job.claim`‡, `job.progress`‡, `job.done`‡,
+`react`, `job.claim`‡, `job.progress`‡, `job.done`‡,
 `job.failed`‡.  (* host, † screen, ‡ worker)
 
 Server → client: `welcome`, `pong`, `state`, `playback`, `control`, `control.set`, `library`,
-`react`, `score`, `job`, `error`, `kicked`.
+`react`, `job`, `error`, `kicked`.
 
 Close codes: `4403` removed from the room, `4404` room closed.
 
@@ -38,5 +38,5 @@ Close codes: `4403` removed from the room, `4404` room closed.
 - `POST /api/rooms/{CODE}/uploads?member=…` raw audio body (≤ 60 MB) → `{ uploadId }`
 - `GET /api/rooms/{CODE}/uploads/{id}` (worker, Bearer library token) → the upload
 - `GET /api/rooms/{CODE}/songs/{id}/media?member=…|admin=…` → manifest + signed URLs
-  (6 h). Guests get lyrics, pitch and cover only; audio is for the host.
+  (6 h). Guests get lyrics and cover only; audio is for the host.
 - `PUT /api/rooms/{CODE}/songs/{id}/lyrics?admin=…` `{ lyrics, offsetMs? }` → saves edits

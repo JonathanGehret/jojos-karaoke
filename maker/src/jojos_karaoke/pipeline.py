@@ -34,7 +34,7 @@ class Options:
     device: str = "auto"
     lookup: bool = True            # LRCLIB
     allow_transcribe: bool = True
-    pitch: bool = True
+    pitch: bool = False           # reference pitch contour (for future singing scores)
     duets: bool = False            # "A: words" singer prefixes in plain lyrics
     video: bool = False
     video_background: str | None = None

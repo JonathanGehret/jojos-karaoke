@@ -46,7 +46,6 @@
   let showAdminQr = $state(false);
   let toast = $state<string | null>(null);
   let reactions = $state<{ id: number; emoji: string; x: number; nickname: string }[]>([]);
-  let score = $state<{ value: number; final: boolean; nickname: string } | null>(null);
   let loadToken = 0;
   let hideTimer = 0;
   let advanceTimer = 0;
@@ -96,7 +95,6 @@
     loadedItem = item;
     lyrics = null;
     media = null;
-    score = null;
     countdown = 0;
     if (!item.songId || !admin) return;
     loading = true;
@@ -184,8 +182,6 @@
       const id = Math.random();
       reactions = [...reactions.slice(-30), { id, emoji: m.emoji, x: 10 + Math.random() * 80, nickname: m.nickname }];
       setTimeout(() => (reactions = reactions.filter((r) => r.id !== id)), 3500);
-    } else if (m.type === 'score') {
-      score = { value: m.value, final: m.final, nickname: m.nickname };
     }
   });
 
@@ -290,12 +286,6 @@
 
       {#if started && loadedItem && lyrics && countdown === 0}
         <LyricsView {lyrics} clock={lyricsClock} />
-      {/if}
-
-      {#if score}
-        <div class="scorebar" class:final={score.final}>
-          <span>{score.nickname}</span><div class="meter"><div style:width="{score.value}%"></div></div><b>{score.value}</b>
-        </div>
       {/if}
 
       <div class="reactions" aria-hidden="true">

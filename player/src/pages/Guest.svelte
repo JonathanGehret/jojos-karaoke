@@ -7,7 +7,6 @@
   import LyricsView from '../components/LyricsView.svelte';
   import QueueList from '../components/QueueList.svelte';
   import Toast from '../components/Toast.svelte';
-  import Sing from '../components/Sing.svelte';
   import { fetchJson, roomInfo, songMedia, uploadForRequest } from '../lib/api';
   import { keepAwake, vibrate } from '../lib/device';
   import { mmss } from '../lib/format';
@@ -29,7 +28,6 @@
   let tab = $state<'lyrics' | 'songs' | 'queue' | 'request' | 'host'>('songs');
   let search = $state('');
   let lyrics = $state<Lyrics | null>(null);
-  let pitch = $state<{ hopMs: number; midi: (number | null)[] } | null>(null);
   let lyricsFor = '';
   let toast = $state<string | null>(null);
   let alerted = '';
@@ -78,7 +76,6 @@
     if (id && id !== lyricsFor) {
       lyricsFor = id;
       lyrics = null;
-      pitch = null;
       tab = 'lyrics';
       loadLyrics();
     }
@@ -95,10 +92,8 @@
     try {
       const m = await songMedia(code, now.songId, { admin, member: conn.memberToken });
       const l = await fetchJson<Lyrics>(m.urls.lyrics);
-      const p = m.urls.pitch ? await fetchJson<any>(m.urls.pitch).catch(() => null) : null;
       if (lyricsFor !== id) return;
       lyrics = shiftLyrics(l, m.manifest.offsetMs ?? 0);
-      pitch = p;
     } catch (e) { say((e as Error).message); }
   }
 
@@ -189,10 +184,6 @@
             <LyricsView {lyrics} {clock} size="phone" />
           {:else}
             <p class="muted">Loading lyrics…</p>
-          {/if}
-          {#if myTurn && pitch}
-            <Sing {pitch} {clock} keyShift={pb?.key ?? 0}
-                  onscore={(value, final) => conn?.send({ type: 'score', queueItemId: now!.id, value, final })} />
           {/if}
           <div class="react-bar">
             {#each REACTIONS as r}<button onclick={() => conn?.send({ type: 'react', emoji: r })}>{r}</button>{/each}

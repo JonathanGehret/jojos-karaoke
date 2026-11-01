@@ -127,4 +127,4 @@ docs/          this file
 - **M2 Solo player**: play a package with all audio and lyric features.
 - **M3 Rooms & library**: online library, rooms, QR join, synced lyrics, shared queue.
 - **M4 On-the-spot requests**: upload from phone, processing worker, job status in queue.
-- **M5 / later**: hosted GPU server, pitch scoring, reactions, casting, desktop app.
+- **M5 / later**: reactions and casting (done); hosted GPU server, singing scores (#22), desktop app, in-browser processing.
