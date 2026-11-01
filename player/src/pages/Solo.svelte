@@ -1,0 +1,105 @@
+<script lang="ts">
+  // Play a local .jkp package on this device, with all the audio controls.
+  import { onDestroy } from 'svelte';
+  import { type Lyrics, shiftLyrics } from '$shared/lyrics';
+  import LyricsView from '../components/LyricsView.svelte';
+  import { AudioEngine, decode, unlockAudio } from '../lib/audio/engine';
+  import { keepAwake, toggleFullscreen } from '../lib/device';
+  import { mmss } from '../lib/format';
+  import { type LocalPackage, bufferOf, readPackage } from '../lib/jkp';
+  import { navigate } from '../lib/nav.svelte';
+  import { session } from '../lib/session';
+  import { store } from '../lib/store';
+
+  const engine = new AudioEngine();
+  let ready = false;
+  let pkg = $state<LocalPackage | null>(session.localPackage);
+  let lyrics = $state<Lyrics | null>(null);
+  let error = $state<string | null>(null);
+  let playing = $state(false);
+  let pos = $state(0);
+  let key = $state(0);
+  let rate = $state(1);
+  let vocal = $state(store.vocal);
+  let offset = $state(0);
+
+  async function open(e: Event) {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    if (!f) return;
+    error = null;
+    try {
+      pkg = readPackage(new Uint8Array(await f.arrayBuffer()));
+      await prepare();
+    } catch (err) { error = (err as Error).message; }
+  }
+
+  async function prepare() {
+    if (!pkg) return;
+    await unlockAudio();
+    if (!ready) { await engine.init(); ready = true; }
+    const inst = await decode(bufferOf(pkg.files[pkg.manifest.files.instrumental]));
+    const v = pkg.manifest.files.vocals ? await decode(bufferOf(pkg.files[pkg.manifest.files.vocals])) : null;
+    engine.load(inst, v);
+    engine.setVocal(vocal);
+    engine.onEnded = () => (playing = false);
+    offset = pkg.manifest.offsetMs ?? 0;
+    lyrics = shiftLyrics(pkg.lyrics, offset);
+    session.localPackage = pkg;
+    keepAwake();
+  }
+
+  function toggle() {
+    if (!pkg) return;
+    if (engine.playing) engine.pause(); else engine.play();
+    playing = engine.playing;
+  }
+
+  const t = setInterval(() => (pos = engine.positionMs()), 250);
+  onDestroy(() => { clearInterval(t); engine.stop(); });
+
+  function edit() {
+    if (!pkg) return;
+    pkg.manifest.offsetMs = offset;
+    session.localPackage = pkg;
+    engine.stop();
+    navigate('/edit');
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === ' ') { e.preventDefault(); toggle(); }
+  }
+</script>
+
+<svelte:window onkeydown={onKey} />
+
+<main class="solo">
+  <header class="bar"><button class="link" onclick={() => navigate('/')}>← Home</button>
+    <h2>{pkg ? pkg.manifest.title : 'Play a file'}</h2>{#if pkg}<span class="muted">{pkg.manifest.artist}</span>{/if}</header>
+
+  {#if !lyrics}
+    <div class="card stack">
+      {#if pkg}<button class="primary big" onclick={prepare}>▶ Load “{pkg.manifest.title}”</button>{/if}
+      <label>Open a karaoke package (.jkp)<input type="file" accept=".jkp,application/zip" onchange={open} /></label>
+      <p class="hint">Make one with <code>jojo make song.mp3</code>.</p>
+      {#if error}<p class="error">{error}</p>{/if}
+    </div>
+  {:else}
+    <LyricsView {lyrics} clock={() => engine.positionMs() - store.deviceOffsetMs} />
+    <footer class="controls">
+      <div class="progress"><span>{mmss(pos)}</span>
+        <input type="range" min="0" max={engine.durationMs || 1} value={pos} oninput={(e) => engine.seek(+(e.target as HTMLInputElement).value)} />
+        <span>{mmss(engine.durationMs)}</span></div>
+      <div class="row">
+        <button onclick={() => engine.seek(0)}>⏮</button>
+        <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'}</button>
+        <span class="group">Key <button onclick={() => engine.setKey(--key)}>−</button><b>{key}</b><button onclick={() => engine.setKey(++key)}>+</button></span>
+        <span class="group">Tempo <button onclick={() => { rate = Math.max(0.8, rate - 0.05); engine.setRate(rate); }}>−</button><b>{Math.round(rate * 100)}%</b><button onclick={() => { rate = Math.min(1.2, rate + 0.05); engine.setRate(rate); }}>+</button></span>
+        <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" bind:value={vocal}
+          oninput={() => { engine.setVocal(vocal); store.vocal = vocal; }} disabled={!pkg?.manifest.files.vocals} /></label>
+        <span class="group">Lyrics <button onclick={() => { offset -= 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }}>−</button><b>{offset} ms</b><button onclick={() => { offset += 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }}>+</button></span>
+        <button onclick={toggleFullscreen}>⛶</button>
+        <button onclick={edit}>Edit timing</button>
+      </div>
+    </footer>
+  {/if}
+</main>

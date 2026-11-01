@@ -8,6 +8,8 @@
 | Where do songs live? | **Online only.** Processed packages are uploaded to a private library (Cloudflare R2) and streamed when played. No download/offline copy needed. |
 | Can guests request songs that aren't in the library? | **Yes, on the spot.** A guest requests a song (and uploads their own copy of the audio from their phone); a processing worker on the host's or a friend's machine picks the job up and the song joins the queue when ready. |
 | Player stack | **TypeScript + Svelte 5 + Vite + vite-plugin-pwa.** Small bundles, no virtual DOM, fast. The lyric highlight runs in its own `requestAnimationFrame` loop outside the framework. |
+| Key/tempo | **SoundTouch AudioWorklet** (`@soundtouchjs/audio-worklet`, actively maintained). Tempo via the source `playbackRate`, which the worklet compensates so the key stays put. (The planned Rubber Band WASM port hasn't been updated since 2022.) |
+| Queue authority | **The room server** owns the queue (fair insertion, limits); **the screen** owns playback. Simpler and safer than the host sending the full queue. |
 | Rust? | Not for now (see below). |
 
 ### Why not Rust (for now)
@@ -16,7 +18,7 @@
   run on PyTorch/ONNX on the GPU. Rust wouldn't make them faster, and the best models and
   tools (audio-separator, Demucs, WhisperX, faster-whisper) are Python-first.
 - **Player**: runs in the browser, so TypeScript. The heavy audio DSP (key/tempo) already
-  exists as WebAssembly (Rubber Band), compiled from C++.
+  exists as an AudioWorklet (SoundTouch).
 - **Room server**: tiny message relay; TypeScript on Workers is the simplest path.
 - **Where Rust would help**: a one-click desktop app for friends who don't want to install
   Python. That's a later issue (Tauri wrapping the maker).
@@ -34,9 +36,9 @@ lyrics?  ─► given txt/lrc │ else fetch synced lyrics (LRCLIB) │ else tra
 
 | Step | Default | Fallback |
 |---|---|---|
-| Separate | `audio-separator` with a **Mel-Band RoFormer** vocal model (current state of the art) | Demucs `htdemucs_ft`; a lighter MDX model for weak CPUs |
+| Separate | `audio-separator` with a **RoFormer** vocal model (BS-RoFormer by default, `--model` to pick another) | Demucs `htdemucs_ft`; a lighter MDX model (`--separator fast`) for weak CPUs |
 | Lyrics | user text / `.lrc` → LRCLIB lookup by artist/title/duration | faster-whisper `large-v3-turbo` on the vocal stem |
-| Align | WhisperX (wav2vec2) or `ctc-forced-aligner` (MMS, many languages) for word timings | keep LRC line timings only |
+| Align | `ctc-forced-aligner` (MMS, 1000+ languages) for word timings; a sequence diff maps its words back onto the lyric lines so a dropped word doesn't shift the rest | LRC line timings; without any model, timing from where the vocal stem is audible (marked for review) |
 | Video | ffmpeg + libass, ASS `\k` karaoke tags | — |
 
 Picks CUDA / Apple Metal (MPS) / CPU automatically. Models download on first run.
@@ -70,7 +72,7 @@ Big two-line lyrics with word-by-word wipe, next-line preview, countdown dots af
 instrumental gaps, duet colours. Shows the QR code, queue and "Up next: nickname, song".
 
 Audio (Web Audio + AudioWorklet): instrumental and vocal stems play in sync; **guide vocal
-slider**; **key ±6 semitones** and **tempo ±20 %** via Rubber Band WASM; lyrics offset nudge
+slider**; **key ±6 semitones** and **tempo ±20 %** via the SoundTouch AudioWorklet; lyrics offset nudge
 (per song and per device, for Bluetooth delay). Fullscreen, Screen Wake Lock.
 
 ### Guests (any phone browser, no install)
@@ -96,7 +98,7 @@ rotation**: round-robin by singer; optional max songs per person.
   one, downloads the uploaded audio, processes, uploads the package and the song enters the
   queue. Uploaded source audio is deleted after processing.
 
-Messages (JSON over WebSocket):
+Messages (JSON over WebSocket; full list in `spec/protocol.md`):
 
 | From | Type | Payload |
 |---|---|---|

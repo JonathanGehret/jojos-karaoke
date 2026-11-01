@@ -1,0 +1,42 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  maker:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: maker } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: uv sync
+      - run: uv run ruff check src tests
+      - run: uv run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -w player
+      - run: npm run build
+      - run: npm test -w room-worker
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [maker, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci && npm install --no-save playwright && npx playwright install --with-deps chromium
+      - run: cd maker && uv sync
+      - run: npm run test:e2e
+        env: { JOJO_E2E_STRICT: '1' }
