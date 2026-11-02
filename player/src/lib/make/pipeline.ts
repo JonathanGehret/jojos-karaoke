@@ -25,6 +25,7 @@ export interface MakeOptions {
   title: string;
   artist: string;
   lyricsText?: string;
+  lyricsSource?: 'user' | 'lrclib'; // where lyricsText came from (the lyrics finder fills it from LRCLIB)
   language?: string;           // 'en', 'de', … or undefined = auto
   separate?: boolean;          // default true
   asr?: boolean;               // use speech recognition for word timing (default true)
@@ -123,11 +124,7 @@ async function songId(title: string, artist: string, data: ArrayBuffer) {
 }
 
 /** Guess artist/title from "Artist - Title.mp3". */
-export function guessFromFilename(name: string): { title: string; artist: string } {
-  const base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').trim();
-  const m = base.match(/^(.+?)\s+-\s+(.+)$/);
-  return m ? { artist: m[1].trim(), title: m[2].trim() } : { artist: '', title: base };
-}
+export { guessFromFilename } from '../audioTags';
 
 export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   const warnings: string[] = [];
@@ -164,11 +161,11 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   let source: 'user' | 'lrclib' | 'transcribed' | 'none' = 'none';
   if (o.lyricsText?.trim()) {
     lines = parseLyrics(o.lyricsText, o.duets);
-    source = 'user';
+    source = o.lyricsSource ?? 'user';
   } else if (o.lookup !== false && o.title) {
     try {
       const q = new URLSearchParams({ title: o.title, artist: o.artist, duration: String(Math.round(durationMs / 1000)) });
-      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 15000 });
+      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 30000 });
       if (r.synced) { lines = parseLrc(r.synced); source = 'lrclib'; }
       else if (r.plain) { lines = parseText(r.plain); source = 'lrclib'; }
       else warnings.push('No lyrics found online.');

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -107,43 +108,88 @@ def _get_json(url: str, timeout: float):
         return json.loads(r.read().decode("utf-8"))
 
 
+_NOISE_BRACKET = re.compile(
+    r"\s*[(\[][^)\]]*\b(official|video|audio|lyrics?|visuali[sz]er|remaster(ed)?|hd|hq|4k|live|explicit"
+    r"|clean|edit|version|mono|stereo|feat\.?|ft\.?|with)\b[^)\]]*[)\]]", re.I)
+_NOISE_SUFFIX = re.compile(r"\s+-\s+(\d{4}\s+)?(remaster(ed)?|radio edit|single version|mono|stereo|live)\b.*$", re.I)
+_FEAT = re.compile(r"\s+(feat\.?|ft\.?|featuring)\s+.*$", re.I)
+_ARTIST_SPLIT = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|&|and|x|vs\.?)\s+|,\s*", re.I)
+DURATION_TOLERANCE_S = 8
+
+
+def clean_title(title: str) -> str:
+    """Drop "(Official Video)", "[Remastered 2011]", "- Radio Edit", "feat. X" from a title.
+    Same rules as shared/lyricsSearch.ts."""
+    t = _FEAT.sub("", _NOISE_SUFFIX.sub("", _NOISE_BRACKET.sub("", title)))
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t or title.strip()
+
+
+def main_artist(artist: str) -> str:
+    """First credited artist: "A feat. B", "A & B", "A, B" -> "A"."""
+    return _ARTIST_SPLIT.split(artist)[0].strip() or artist.strip()
+
+
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s.lower())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return " ".join(re.sub(r"[^\w]+|_", " ", s).split())
+
+
 def fetch_lrclib(artist: str, title: str, duration_s: float | None = None,
                  timeout: float = 8.0) -> tuple[str | None, str | None]:
     """Look up lyrics on LRCLIB. Returns (synced_lrc, plain_text); either may be None.
+    Tries an exact match, a search with the cleaned title, then a free-text search.
     Never raises: network trouble just means "not found"."""
     if not title:
         return None, None
-    params = {"track_name": title, "artist_name": artist or ""}
+    t, a = clean_title(title), main_artist(artist or "")
+    queries: list[str] = []
     if duration_s:
-        params["duration"] = str(int(round(duration_s)))
-    try:
+        queries.append("get?" + urllib.parse.urlencode(
+            {"track_name": t, "artist_name": a, "duration": str(int(round(duration_s)))}))
+    queries.append("search?" + urllib.parse.urlencode({"track_name": t, **({"artist_name": a} if a else {})}))
+    queries.append("search?" + urllib.parse.urlencode({"q": f"{a} {t}".strip()}))
+    candidates: list[dict] = []
+    for q in queries:
         try:
-            d = _get_json(f"{LRCLIB}/get?{urllib.parse.urlencode(params)}", timeout)
-            candidates = [d]
+            d = _get_json(f"{LRCLIB}/{q}", timeout)
         except urllib.error.HTTPError as e:
-            if e.code != 404:
-                return None, None
-            q = urllib.parse.urlencode({"track_name": title, "artist_name": artist or ""})
-            candidates = _get_json(f"{LRCLIB}/search?{q}", timeout) or []
-        best = pick_lrclib_candidate(candidates, duration_s)
-        if not best:
+            if e.code == 404:
+                continue
             return None, None
-        return best.get("syncedLyrics") or None, best.get("plainLyrics") or None
-    except (OSError, ValueError, TimeoutError):
-        return None, None
+        except (OSError, ValueError, TimeoutError):
+            return None, None
+        candidates += d[:20] if isinstance(d, list) else [d] if d else []
+        best = pick_lrclib_candidate(candidates, duration_s, title, artist)
+        if best:
+            return best.get("syncedLyrics") or None, best.get("plainLyrics") or None
+    return None, None
 
 
-def pick_lrclib_candidate(candidates: list[dict], duration_s: float | None) -> dict | None:
-    """Prefer synced lyrics, then the closest duration (within 8 s when known)."""
+def pick_lrclib_candidate(candidates: list[dict], duration_s: float | None,
+                          title: str = "", artist: str = "") -> dict | None:
+    """Prefer synced lyrics, then the closest duration (within 8 s when known). With a title
+    or artist given, skip hits that match neither well (loose free-text results)."""
     ok = [c for c in candidates if isinstance(c, dict) and not c.get("instrumental")
           and (c.get("syncedLyrics") or c.get("plainLyrics"))]
     if duration_s:
-        ok = [c for c in ok if not c.get("duration") or abs(float(c["duration"]) - duration_s) <= 8]
+        ok = [c for c in ok if not c.get("duration")
+              or abs(float(c["duration"]) - duration_s) <= DURATION_TOLERANCE_S]
+    wt, wa = _norm(clean_title(title)) if title else "", _norm(main_artist(artist)) if artist else ""
+
+    def miss(c) -> int:
+        t, a = _norm(clean_title(c.get("trackName") or "")), _norm(c.get("artistName") or "")
+        tm = 0 if not wt or t == wt else 1 if (wt in t or t in wt) else 2
+        am = 0 if not wa or wa in a or a in wa else 1
+        return tm + am
+
+    ok = [c for c in ok if miss(c) <= 1]
     if not ok:
         return None
 
     def score(c):
         dd = abs(float(c.get("duration") or duration_s or 0) - (duration_s or 0))
-        return (0 if c.get("syncedLyrics") else 1, dd)
+        return (0 if c.get("syncedLyrics") else 1, dd, miss(c))
 
     return sorted(ok, key=score)[0]

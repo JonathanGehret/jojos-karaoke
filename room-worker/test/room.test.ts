@@ -78,6 +78,14 @@ describe('accounts and library', () => {
   });
 });
 
+describe('lyrics lookup', () => {
+  it('answers without an account and without asking upstream when nothing is given', async () => {
+    expect(await api('/api/lyrics/search')).toEqual({ status: 200, body: { results: [] } });
+    expect(await api('/api/lyrics')).toEqual({ status: 200, body: { synced: null, plain: null } });
+    expect((await api('/api/lyrics/nope')).status).toBe(404);
+  });
+});
+
 describe('room', () => {
   it('runs a party: fair queue, sync relay, media access, kick', async () => {
     expect((await api(`/api/rooms/${code}/info`)).body.ownerName).toBe('Host');

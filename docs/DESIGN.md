@@ -38,7 +38,7 @@ lyrics?  ─► given txt/lrc │ else fetch synced lyrics (LRCLIB) │ else tra
 | Step | Default | Fallback |
 |---|---|---|
 | Separate | `audio-separator` with a **RoFormer** vocal model (BS-RoFormer by default, `--model` to pick another) | Demucs `htdemucs_ft`; a lighter MDX model (`--separator fast`) for weak CPUs |
-| Lyrics | user text / `.lrc` → LRCLIB lookup by artist/title/duration | faster-whisper `large-v3-turbo` on the vocal stem |
+| Lyrics | user text / `.lrc` → LRCLIB lookup by artist/title/duration (titles cleaned of "(Official Video)", "- Remastered", "feat."; free-text search as a fallback; `shared/lyricsSearch.ts` has the same rules for the browser) | faster-whisper `large-v3-turbo` on the vocal stem |
 | Align | `ctc-forced-aligner` (MMS, 1000+ languages) for word timings; a sequence diff maps its words back onto the lyric lines so a dropped word doesn't shift the rest | LRC line timings; without any model, timing from where the vocal stem is audible (marked for review) |
 | Video | ffmpeg + libass, ASS `\k` karaoke tags | — |
 

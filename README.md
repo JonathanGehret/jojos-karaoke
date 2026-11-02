@@ -43,7 +43,7 @@ room closes.
    songs with their own token (`jojo make … --upload`).
 
 Host screen keys: Space play/pause · N skip · ←/→ seek · +/− key · [ ] tempo · V guide
-vocal · F fullscreen · Q queue · , . lyrics offset. The 📱 button shows a QR to control
+vocal · F fullscreen · Q queue · , . lyrics offset. The phone button shows a QR to control
 the room from your own phone; *Cast* sends the screen to a TV (Chrome).
 
 ## Making songs in the browser
@@ -55,8 +55,12 @@ Whisper) and stay in the browser cache.
 - With a graphics card (WebGPU: Chrome/Edge on a laptop or desktop): roughly 1–3 minutes per song.
 - Without WebGPU it runs on the CPU: an 8-second clip took ~40 s in testing, so expect 10+ minutes for a song.
 - Phones are too slow for this; use a laptop.
-- Lyrics: pasted, looked up on LRCLIB, or transcribed. English uses `whisper-tiny.en`, other
-  languages `whisper-small`.
+- Lyrics: picking a file reads its title and artist (from the file's tags, else its name) and
+  searches [LRCLIB](https://lrclib.net) right away. A confident match (same length, synced) is used
+  automatically; otherwise pick one from the list (synced lyrics give the best timing), search
+  with other words, or paste your own. Guests get the same finder when they request a song.
+  With nothing picked, the maker looks again while making, then falls back to transcription.
+  English uses `whisper-tiny.en`, other languages `whisper-small`.
 
 ## Installing the CLI maker (you and your friends)
 

@@ -3,6 +3,7 @@
 //   time by scripts/upload-runtime.mjs
 // - AI models, fetched once from their upstream and cached in R2
 
+import { type LrclibRecord, bestLyrics, cleanTitle, mainArtist, rankLyrics } from '../../shared/lyricsSearch';
 import { type Env, HttpError } from './util';
 
 const RUNTIME_FILE = /^ort-wasm-simd-threaded(\.(jsep|asyncify|jspi))?\.(wasm|mjs)$/;
@@ -74,35 +75,57 @@ async function cached(env: Env, ctx: ExecutionContext, key: string, upstream: st
   return new Response(toClient, { headers: { ...headers, 'content-length': String(len) } });
 }
 
-/** LRCLIB lookup for the browser maker (same choice rules as maker/lyrics.py). */
-export async function lookupLyrics(url: URL): Promise<Response> {
-  const title = url.searchParams.get('title')?.slice(0, 200) ?? '';
-  const artist = url.searchParams.get('artist')?.slice(0, 200) ?? '';
-  const duration = Number(url.searchParams.get('duration')) || 0;
-  const none = () => Response.json({ synced: null, plain: null });
-  if (!title) return none();
-  const ua = { 'user-agent': 'jojos-karaoke (https://github.com/JonathanGehret/jojos-karaoke)' };
-  const get = async (path: string): Promise<any> => {
-    let r = await fetch(`https://lrclib.net/api/${path}`, { headers: ua, signal: AbortSignal.timeout(8000) });
-    if (r.status === 503 || r.status === 429) { // LRCLIB answers "server busy" at times
-      await new Promise((ok) => setTimeout(ok, 1500));
-      r = await fetch(`https://lrclib.net/api/${path}`, { headers: ua, signal: AbortSignal.timeout(8000) });
-    }
-    return r.ok ? r.json() : r.status === 404 ? null : Promise.reject(new Error(String(r.status)));
-  };
-  try {
-    const q = new URLSearchParams({ track_name: title, artist_name: artist });
-    let cands: any[] = [];
-    const exact = duration ? await get(`get?${q}&duration=${Math.round(duration)}`) : null;
-    if (exact) cands = [exact];
-    else cands = ((await get(`search?${q}`)) as any[] | null) ?? [];
-    const ok = cands.filter((c) => c && !c.instrumental && (c.syncedLyrics || c.plainLyrics) &&
-      (!duration || !c.duration || Math.abs(c.duration - duration) <= 8));
-    ok.sort((a, b) => (a.syncedLyrics ? 0 : 1) - (b.syncedLyrics ? 0 : 1) ||
-      Math.abs((a.duration ?? duration) - duration) - Math.abs((b.duration ?? duration) - duration));
-    const best = ok[0];
-    return best ? Response.json({ synced: best.syncedLyrics || null, plain: best.plainLyrics || null }) : none();
-  } catch {
-    return none();
+const LRCLIB_UA = { 'user-agent': 'jojos-karaoke (https://github.com/JonathanGehret/jojos-karaoke)' };
+
+async function lrclib(path: string): Promise<any> {
+  const url = `https://lrclib.net/api/${path}`;
+  let r = await fetch(url, { headers: LRCLIB_UA, signal: AbortSignal.timeout(8000) });
+  if (r.status === 503 || r.status === 429) { // LRCLIB answers "server busy" at times
+    await new Promise((ok) => setTimeout(ok, 1500));
+    r = await fetch(url, { headers: LRCLIB_UA, signal: AbortSignal.timeout(8000) });
   }
+  return r.ok ? r.json() : r.status === 404 ? null : Promise.reject(new Error(String(r.status)));
+}
+
+/** LRCLIB records for a song: exact match by duration, then a structured search with the
+ *  cleaned title, then a free-text search (catches "Artist - Title" mix-ups and typos). */
+async function findLyrics(title: string, artist: string, duration: number, q: string, enough: number): Promise<LrclibRecord[]> {
+  const out: LrclibRecord[] = [];
+  const have = () => out.filter((r) => r && !r.instrumental && (r.syncedLyrics || r.plainLyrics)).length;
+  const tryGet = async (path: string) => {
+    try {
+      const d = await lrclib(path);
+      if (Array.isArray(d)) out.push(...d.slice(0, 20)); else if (d) out.push(d);
+    } catch { /* one source failing must not hide the others */ }
+  };
+  const t = title && cleanTitle(title);
+  const a = artist && mainArtist(artist);
+  if (t && duration) await tryGet(`get?${new URLSearchParams({ track_name: t, artist_name: a, duration: String(Math.round(duration)) })}`);
+  if (t && have() < enough) await tryGet(`search?${new URLSearchParams({ track_name: t, ...(a ? { artist_name: a } : {}) })}`);
+  const free = q || [a, t].filter(Boolean).join(' ');
+  if (free && have() < enough) await tryGet(`search?${new URLSearchParams({ q: free })}`);
+  return out;
+}
+
+const lyricsParams = (url: URL) => ({
+  title: url.searchParams.get('title')?.slice(0, 200).trim() ?? '',
+  artist: url.searchParams.get('artist')?.slice(0, 200).trim() ?? '',
+  q: url.searchParams.get('q')?.slice(0, 300).trim() ?? '',
+  duration: Number(url.searchParams.get('duration')) || 0,
+});
+
+/** The lyrics to use without asking (browser maker): `{ synced, plain }`, both null if unsure. */
+export async function lookupLyrics(url: URL): Promise<Response> {
+  const { title, artist, duration } = lyricsParams(url);
+  if (!title) return Response.json({ synced: null, plain: null });
+  const best = bestLyrics(rankLyrics(await findLyrics(title, artist, duration, '', 1), { title, artist, duration }), duration);
+  return Response.json({ synced: best?.synced ?? null, plain: best?.plain ?? null });
+}
+
+/** Candidates to choose from (lyrics finder): `{ results: LyricsCandidate[] }`, best first. */
+export async function searchLyrics(url: URL): Promise<Response> {
+  const { title, artist, q, duration } = lyricsParams(url);
+  if (!title && !q) return Response.json({ results: [] });
+  const ranked = rankLyrics(await findLyrics(title, artist, duration, q, 6), { title: title || q, artist, duration });
+  return Response.json({ results: ranked.slice(0, 8) });
 }
