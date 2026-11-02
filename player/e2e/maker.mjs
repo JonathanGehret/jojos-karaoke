@@ -92,7 +92,8 @@ try {
   check(await page.evaluate(() => crossOriginIsolated), 'page is cross-origin isolated (multi-threaded WebAssembly)');
   await page.locator('input[type=file]').first().setInputFiles(song);
   check(await page.getByPlaceholder('Title').inputValue() === 'Webmade', 'title guessed from the file name');
-  await page.getByPlaceholder(/Lyrics \(optional/).fill('la la\nlo lo');
+  await page.getByRole('button', { name: 'Paste lyrics yourself' }).click();
+  await page.getByLabel('Lyrics text').fill('la la\nlo lo');
   const t0 = Date.now();
   await page.getByRole('button', { name: 'Make karaoke' }).click();
   await page.getByText('Saved on this device').waitFor({ timeout: realModel ? 900_000 : Number(process.env.JOJO_E2E_MAKE_TIMEOUT || 180_000) });

@@ -21,7 +21,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       // App shell only. Songs stream from the online library and are never cached here.
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,webmanifest,woff2}'],
         // the browser maker (ONNX Runtime + transformers.js) loads on demand, not for every guest
         globIgnores: ['**/make.worker-*.js', '**/transformers*.js', '**/ort*.js'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,

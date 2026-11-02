@@ -2,12 +2,18 @@
   // A guest's phone: join with a nickname, see synced lyrics, pick songs, request new ones.
   // With the host token (from the host's 📱 QR or after casting) it is also the remote control.
   import { onDestroy } from 'svelte';
+  import {
+    AudioLines, Download, FileAudio, Gamepad2, ListMusic, MicVocal, Minus, Music, Pause, Play, Plus, Save, Search,
+    Send, SkipBack, SkipForward, Upload, User, WifiOff, X,
+  } from '@lucide/svelte';
   import type { Lyrics } from '$shared/lyrics';
+  import LyricsFinder from '../components/LyricsFinder.svelte';
   import { REACTIONS, cleanNickname } from '$shared/protocol';
   import LyricsView from '../components/LyricsView.svelte';
   import QueueList from '../components/QueueList.svelte';
   import Toast from '../components/Toast.svelte';
   import { roomInfo, uploadForRequest } from '../lib/api';
+  import { audioDuration, guessFromFilename, songInfo } from '../lib/audioTags';
   import { downloadBytes, importJkp } from '../lib/localLibrary';
   import { keepAwake, vibrate } from '../lib/device';
   import { mmss } from '../lib/format';
@@ -37,7 +43,9 @@
   let reqTitle = $state('');
   let reqArtist = $state('');
   let reqLyrics = $state('');
+  let reqDuration = $state(0);
   let reqBusy = $state(false);
+  let reqFinder = $state<LyricsFinder | null>(null);
 
   roomInfo(code).then((r) => (ownerName = r.ownerName)).catch(() => (missing = true));
 
@@ -113,21 +121,27 @@
       const { uploadId } = await uploadForRequest(code, conn.memberToken, reqFile);
       conn.send({ type: 'request.add', uploadId, title: reqTitle.trim() || reqFile.name.replace(/\.[^.]+$/, ''),
         artist: reqArtist.trim(), lyrics: reqLyrics.trim() || undefined });
-      reqFile = null; reqTitle = ''; reqArtist = ''; reqLyrics = '';
+      reqFile = null; reqTitle = ''; reqArtist = ''; reqLyrics = ''; reqFinder?.reset();
       say('Request sent! It will show in the queue while it is being made.');
       tab = 'queue';
     } catch (err) { say((err as Error).message); }
     finally { reqBusy = false; }
   }
 
-  function pickFile(e: Event) {
+  async function pickFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0] ?? null;
     reqFile = f;
-    if (f && !reqTitle) {
-      const base = f.name.replace(/\.[^.]+$/, '');
-      const m = base.match(/^(.+?)\s+-\s+(.+)$/);
-      if (m) { reqArtist ||= m[1]; reqTitle = m[2]; } else reqTitle = base;
-    }
+    reqLyrics = ''; reqDuration = 0;
+    reqFinder?.reset();
+    if (!f) return;
+    ({ title: reqTitle, artist: reqArtist } = guessFromFilename(f.name));
+    const info = await songInfo(f);
+    if (reqFile !== f) return;
+    reqTitle = info.title; reqArtist = info.artist;
+    const d = await audioDuration(f);
+    if (reqFile !== f) return;
+    reqDuration = d;
+    reqFinder?.search(true);
   }
 
   const ctl = (action: 'play' | 'pause' | 'skip' | 'restart') => conn?.send({ type: 'control', action });
@@ -137,79 +151,85 @@
 </script>
 
 {#if missing}
-  <main class="page"><h2>Room {code} not found</h2><p>Check the code with the host.</p>
-    <button onclick={() => navigate('/')}>Home</button></main>
+  <main class="page"><div class="empty-state"><Music size={40} /><h2>Room {code} not found</h2><p>Check the code with the host.</p>
+    <button onclick={() => navigate('/')}>Home</button></div></main>
 {:else if !joined}
   <main class="page join-page">
+    <div class="logo" aria-hidden="true"><MicVocal size={34} /></div>
     <h1>Room <span class="code">{code}</span></h1>
     {#if ownerName}<p class="muted">{ownerName}'s party</p>{/if}
     <form class="card stack" onsubmit={join}>
-      <label for="nick">Your name</label>
+      <label for="nick" class="field-label">Your name</label>
       <input id="nick" bind:value={nickname} maxlength="24" autocomplete="nickname" placeholder="Nickname" required />
-      <button class="primary big" type="submit">Join</button>
+      <button class="primary big" type="submit">Join the party</button>
     </form>
   </main>
 {:else if conn?.status === 'kicked'}
-  <main class="page"><h2>You were removed from this room.</h2><button onclick={() => navigate('/')}>Home</button></main>
+  <main class="page"><div class="empty-state"><h2>You were removed from this room.</h2><button onclick={() => navigate('/')}>Home</button></div></main>
 {:else if conn?.status === 'gone'}
-  <main class="page"><h2>This party has ended.</h2><button onclick={() => navigate('/')}>Home</button></main>
+  <main class="page"><div class="empty-state"><Music size={40} /><h2>This party has ended.</h2><p>Thanks for singing!</p>
+    <button onclick={() => navigate('/')}>Home</button></div></main>
 {:else}
   <div class="guest">
     <header class="bar">
       <span class="code">{code}</span>
-      <span class="muted">{you?.nickname ?? nickname}{#if admin} · host{/if}</span>
-      {#if conn?.status !== 'open'}<span class="badge fail">reconnecting…</span>{/if}
+      <span class="spacer"></span>
+      {#if conn?.status !== 'open'}<span class="badge fail"><WifiOff size={12} />reconnecting…</span>{/if}
+      <span class="who"><User size={16} />{you?.nickname ?? nickname}{#if admin} · host{/if}</span>
     </header>
 
     {#if myTurn}
-      <div class="banner turn">🎤 Your turn: {now?.title}</div>
+      <div class="banner turn" role="status"><MicVocal size={20} />Your turn: {now?.title}</div>
     {:else if iAmNext}
-      <div class="banner next">You're up next: {nextUp?.title}</div>
+      <div class="banner next" role="status">You're up next: {nextUp?.title}</div>
     {/if}
-
-    <nav class="tabs">
-      <button class:on={tab === 'lyrics'} onclick={() => (tab = 'lyrics')}>Lyrics</button>
-      <button class:on={tab === 'songs'} onclick={() => (tab = 'songs')}>Songs</button>
-      <button class:on={tab === 'queue'} onclick={() => (tab = 'queue')}>Queue ({st?.queue.length ?? 0})</button>
-      <button class:on={tab === 'request'} onclick={() => (tab = 'request')}>Request</button>
-      {#if admin}<button class:on={tab === 'host'} onclick={() => (tab = 'host')}>Host</button>{/if}
-    </nav>
 
     <section class="panel">
       {#if tab === 'lyrics'}
         {#if now}
-          <div class="now"><b>{now.title}</b> <span class="muted">· {now.artist} · {now.nickname}</span>
+          <div class="now-card"><AudioLines size={22} class="eq" />
+            <span class="what"><b>{now.title}</b><span class="muted">{now.artist ? `${now.artist} · ` : ''}sung by {now.nickname}</span></span>
             {#if pb?.state === 'paused'}<span class="badge">paused</span>{/if}</div>
           {#if lyrics}
             <LyricsView {lyrics} {clock} size="phone" />
           {:else}
-            <p class="muted">Loading lyrics…</p>
+            <p class="muted center">Loading lyrics…</p>
           {/if}
           <div class="react-bar">
-            {#each REACTIONS as r}<button onclick={() => conn?.send({ type: 'react', emoji: r })}>{r}</button>{/each}
+            {#each REACTIONS as r}<button onclick={() => conn?.send({ type: 'react', emoji: r })} aria-label="React {r}">{r}</button>{/each}
           </div>
         {:else}
-          <p class="muted center">Nothing is playing yet.{#if nextUp} Next: <b>{nextUp.title}</b> ({nextUp.nickname}).{/if}</p>
+          <div class="empty-state"><Music size={40} /><b>Nothing is playing yet.</b>
+            {#if nextUp}<span>Next: <b>{nextUp.title}</b> ({nextUp.nickname})</span>
+            {:else}<span>Pick a song and it starts on the big screen.</span>
+              <button class="primary" onclick={() => (tab = 'songs')}><Search size={18} />Find a song</button>{/if}
+          </div>
         {/if}
 
       {:else if tab === 'songs'}
-        <input class="search" type="search" bind:value={search} placeholder="Search {conn?.library.length ?? 0} songs" />
+        <div class="search-box search"><Search size={18} />
+          <input type="search" bind:value={search} placeholder="Search {conn?.library.length ?? 0} songs" aria-label="Search songs" /></div>
         <ul class="songs">
           {#each songs as s (s.id)}
-            <li><button class="song" onclick={() => add(s.id)}>
-              <span><b>{s.title}</b><br /><span class="muted">{s.artist} · {mmss(s.durationMs)}</span></span>
-              <span class="plus">＋</span></button></li>
+            <li><button class="song" onclick={() => add(s.id)} aria-label="Add {s.title} to the queue">
+              <span class="what"><b>{s.title}</b><span class="muted">{s.artist}{s.artist ? ' · ' : ''}{mmss(s.durationMs)}</span></span>
+              <span class="plus"><Plus size={20} /></span></button></li>
           {:else}
-            <li class="muted">{search ? 'No match. Try the Request tab!' : 'The library is empty.'}</li>
+            <li class="empty-state">
+              {#if search}<span>No match for “{search}”.</span><button onclick={() => (tab = 'request')}><Upload size={18} />Request it</button>
+              {:else}<Music size={36} /><span>The host hasn't added songs yet.</span>
+                <button onclick={() => (tab = 'request')}><Upload size={18} />Bring your own</button>{/if}
+            </li>
           {/each}
         </ul>
 
       {:else if tab === 'queue'}
-        {#if now}<p class="muted">Now: <b>{now.title}</b> · {now.nickname}</p>{/if}
+        {#if now}<div class="now-card"><AudioLines size={22} class="eq" /><span class="what"><b>{now.title}</b>
+          <span class="muted">now · {now.nickname}</span></span></div>{/if}
         {#each myResults as r (r.id)}
-          <p class="card">Your karaoke version of <b>{r.title}</b> is ready.
-            <button class="small" onclick={() => keep(r, 'download')}>Download .jkp</button>
-            <button class="small" onclick={() => keep(r, 'save')}>Save in My songs</button></p>
+          <div class="card"><p style="margin-top:0">Your karaoke version of <b>{r.title}</b> is ready.</p>
+            <div class="row"><button class="small" onclick={() => keep(r, 'download')}><Download size={16} />Download .jkp</button>
+            <button class="small" onclick={() => keep(r, 'save')}><Save size={16} />Save in My songs</button></div></div>
         {/each}
         <QueueList items={st?.queue ?? []} youId={you?.id} admin={!!admin}
           onmove={(id, to) => conn?.send({ type: 'queue.move', itemId: id, to })}
@@ -218,48 +238,66 @@
 
       {:else if tab === 'request'}
         <form class="stack" onsubmit={request}>
-          <p class="hint">Not in the list? Upload your own copy of the song: it is turned into karaoke during the
+          <h3>Request a song</h3>
+          <p class="hint" style="margin-top:0">Not in the list? Upload your own copy: it is turned into karaoke during the
             party, and you can download the karaoke version afterwards.</p>
           {#if !st?.workersOnline}
-            <p class="hint warn">No device is making songs right now. Your request will wait until the host
+            <p class="hint warn">No device is making songs right now. Your request waits until the host
               turns on “Make requests on this device” or a friend helps from <b>Make a song</b>.</p>
           {/if}
-          <input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pickFile} required />
-          <input bind:value={reqTitle} placeholder="Title" maxlength="120" required />
-          <input bind:value={reqArtist} placeholder="Artist" maxlength="120" />
-          <textarea bind:value={reqLyrics} rows="4" placeholder="Lyrics (optional; otherwise looked up or transcribed)"></textarea>
-          <button class="primary" type="submit" disabled={reqBusy || !reqFile}>{reqBusy ? 'Uploading…' : 'Request song'}</button>
+          <label class="dropzone">
+            <FileAudio size={28} />
+            <span class="what">{#if reqFile}<b>{reqFile.name}</b><span class="hint">Tap to pick another</span>
+              {:else}<b>Choose a song file</b><span class="hint">From your phone's files</span>{/if}</span>
+            <input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pickFile} required />
+          </label>
+          <input bind:value={reqTitle} placeholder="Title" aria-label="Title" maxlength="120" required />
+          <input bind:value={reqArtist} placeholder="Artist" aria-label="Artist" maxlength="120" />
+          <span class="field-label">Lyrics <span class="hint" style="margin:0; font-weight:400">optional: otherwise looked up or transcribed</span></span>
+          <LyricsFinder bind:this={reqFinder} bind:value={reqLyrics} title={reqTitle} artist={reqArtist} duration={reqDuration} />
+          <button class="primary big" type="submit" disabled={reqBusy || !reqFile}><Send size={20} />{reqBusy ? 'Uploading…' : 'Request song'}</button>
         </form>
 
       {:else if tab === 'host' && admin}
         <div class="stack">
-          <div class="row">
-            <button onclick={() => ctl('restart')}>⏮</button>
-            <button class="primary" onclick={() => ctl(pb?.state === 'playing' ? 'pause' : 'play')}>{pb?.state === 'playing' ? '⏸ Pause' : '▶ Play'}</button>
-            <button onclick={() => ctl('skip')}>⏭ Skip</button>
+          <div class="remote">
+            <button onclick={() => ctl('restart')} aria-label="Restart"><SkipBack size={22} /></button>
+            <button class="primary" onclick={() => ctl(pb?.state === 'playing' ? 'pause' : 'play')} aria-label={pb?.state === 'playing' ? 'Pause' : 'Play'}>
+              {#if pb?.state === 'playing'}<Pause size={28} />{:else}<Play size={28} />{/if}</button>
+            <button onclick={() => ctl('skip')} aria-label="Skip"><SkipForward size={22} /></button>
           </div>
-          <div class="row">Key
-            <button onclick={() => conn?.send({ type: 'control.set', key: (pb?.key ?? 0) - 1 })}>−</button>
-            <b>{pb?.key ?? 0}</b>
-            <button onclick={() => conn?.send({ type: 'control.set', key: (pb?.key ?? 0) + 1 })}>+</button>
-            Tempo
-            <button onclick={() => conn?.send({ type: 'control.set', rate: (pb?.rate ?? 1) - 0.05 })}>−</button>
+          <div class="stepper"><span>Key</span>
+            <button class="icon small" aria-label="Key down" onclick={() => conn?.send({ type: 'control.set', key: (pb?.key ?? 0) - 1 })}><Minus size={18} /></button>
+            <b>{(pb?.key ?? 0) > 0 ? '+' : ''}{pb?.key ?? 0}</b>
+            <button class="icon small" aria-label="Key up" onclick={() => conn?.send({ type: 'control.set', key: (pb?.key ?? 0) + 1 })}><Plus size={18} /></button></div>
+          <div class="stepper"><span>Tempo</span>
+            <button class="icon small" aria-label="Slower" onclick={() => conn?.send({ type: 'control.set', rate: (pb?.rate ?? 1) - 0.05 })}><Minus size={18} /></button>
             <b>{Math.round((pb?.rate ?? 1) * 100)}%</b>
-            <button onclick={() => conn?.send({ type: 'control.set', rate: (pb?.rate ?? 1) + 0.05 })}>+</button>
-          </div>
-          <label>Guide vocal <input type="range" min="0" max="1" step="0.05" value={pb?.vocal ?? 0}
+            <button class="icon small" aria-label="Faster" onclick={() => conn?.send({ type: 'control.set', rate: (pb?.rate ?? 1) + 0.05 })}><Plus size={18} /></button></div>
+          <label class="stepper"><span>Guide vocal</span><input type="range" min="0" max="1" step="0.05" value={pb?.vocal ?? 0} style="max-width:12em"
             onchange={(e) => conn?.send({ type: 'control.set', vocal: +(e.target as HTMLInputElement).value })} /></label>
           <h4>People</h4>
           <ul class="plain">
             {#each st?.members.filter((m) => m.role === 'guest' && m.id !== you?.id) ?? [] as m (m.id)}
-              <li class:muted={!m.online}>{m.nickname}
-                <button class="link danger" onclick={() => confirm(`Remove ${m.nickname}?`) && conn?.send({ type: 'kick', memberId: m.id })}>remove</button></li>
+              <li class:muted={!m.online}><User size={16} />{m.nickname}<span class="spacer"></span>
+                <button class="small icon ghost danger" aria-label="Remove {m.nickname}" onclick={() => confirm(`Remove ${m.nickname}?`) && conn?.send({ type: 'kick', memberId: m.id })}><X size={16} /></button></li>
+            {:else}
+              <li class="muted">No guests yet.</li>
             {/each}
           </ul>
           <button onclick={() => navigate(`/screen/${code}`)}>Make this device the screen</button>
         </div>
       {/if}
     </section>
+
+    <nav class="tabbar" aria-label="Sections"><div class="inner">
+      <button class:on={tab === 'lyrics'} onclick={() => (tab = 'lyrics')} aria-current={tab === 'lyrics' ? 'page' : undefined}><MicVocal size={22} />Lyrics</button>
+      <button class:on={tab === 'songs'} onclick={() => (tab = 'songs')} aria-current={tab === 'songs' ? 'page' : undefined}><Music size={22} />Songs</button>
+      <button class:on={tab === 'queue'} onclick={() => (tab = 'queue')} aria-current={tab === 'queue' ? 'page' : undefined}><ListMusic size={22} />Queue
+        {#if st?.queue.length}<span class="count">{st.queue.length}</span>{/if}</button>
+      <button class:on={tab === 'request'} onclick={() => (tab = 'request')} aria-current={tab === 'request' ? 'page' : undefined}><Upload size={22} />Request</button>
+      {#if admin}<button class:on={tab === 'host'} onclick={() => (tab = 'host')} aria-current={tab === 'host' ? 'page' : undefined}><Gamepad2 size={22} />Host</button>{/if}
+    </div></nav>
     <Toast message={toast ?? conn?.error ?? null} />
   </div>
 {/if}

@@ -16,5 +16,8 @@
     "test:e2e": "npm run build && npm run test:e2e -w player",
     "typecheck": "npm run typecheck -w player && npm run typecheck -w room-worker",
     "deploy": "npm run build && npm run deploy -w room-worker"
+  },
+  "overrides": {
+    "onnxruntime-web": "1.31.1"
   }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ArrowLeft, Download, Pause, Play, Redo2, Undo2 } from '@lucide/svelte';
   // Timing editor. Room mode (host): loads from the library and saves back.
   // Local mode: edits the package opened in Solo and downloads a new .jkp.
   import { onDestroy } from 'svelte';
@@ -260,9 +261,9 @@
 
 <main class="editor">
   <header class="bar">
-    <button class="link" onclick={back}>← Back</button>
+    <button class="icon ghost" onclick={back} aria-label="Back"><ArrowLeft size={22} /></button>
     <h2>Edit timing{#if manifest}: {manifest.title}{/if}</h2>
-    {#if !code && session.localPackage}<button onclick={() => { const p = session.localPackage!; p.lyrics = E.normalize(lyrics!); p.manifest.offsetMs = offset; downloadBytes(writePackage(p), fileName(p.manifest)); }}>Download .jkp</button>{/if}
+    {#if !code && session.localPackage}<button onclick={() => { const p = session.localPackage!; p.lyrics = E.normalize(lyrics!); p.manifest.offsetMs = offset; downloadBytes(writePackage(p), fileName(p.manifest)); }}><Download size={18} />Download .jkp</button>{/if}
     <button class="primary" onclick={save} disabled={!dirty && offset === (manifest?.offsetMs ?? 0)}>Save</button>
   </header>
   {#if status}<p class="hint">{status}</p>{/if}
@@ -272,7 +273,7 @@
             onpointerdown={pdown} onpointermove={pmove} onpointerup={pup} onpointercancel={pup}></canvas>
 
     <div class="row transport">
-      <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'}</button>
+      <button class="primary icon" onclick={toggle} aria-label={playing ? 'Pause' : 'Play'}>{#if playing}<Pause size={20} />{:else}<Play size={20} />{/if}</button>
       <span>{mmss(pos)} / {mmss(engine.durationMs)}</span>
       <label class="group">Speed
         <select bind:value={speed} onchange={() => engine.setRate(speed)}>
@@ -282,7 +283,7 @@
       {#if tapMode}<button class="primary" onpointerdown={(e) => { e.preventDefault(); tap(); }}>TAP word</button>
         <button onpointerdown={(e) => { e.preventDefault(); tapEnd(); }}>end previous</button>{/if}
       <span class="group">Whole song <button onclick={() => (offset -= 50)}>−</button><b>{offset} ms</b><button onclick={() => (offset += 50)}>+</button></span>
-      <button onclick={doUndo} title="Ctrl+Z">Undo</button><button onclick={doRedo}>Redo</button>
+      <button onclick={doUndo} title="Ctrl+Z"><Undo2 size={16} />Undo</button><button onclick={doRedo}><Redo2 size={16} />Redo</button>
     </div>
     <p class="hint">Tap mode: play, then press Space (or TAP) as each highlighted word starts; Enter ends the previous word.
       Drag word boxes or their edges. [ ] nudge the selected line. Pink = the aligner wasn't sure.</p>

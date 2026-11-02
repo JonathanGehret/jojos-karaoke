@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileMusic, Library, MicVocal, Play, Settings, Sparkles } from '@lucide/svelte';
   import { createRoom } from '../lib/api';
   import { navigate } from '../lib/nav.svelte';
   import { store } from '../lib/store';
@@ -41,6 +42,7 @@
 </script>
 
 <main class="home">
+  <div class="logo" aria-hidden="true"><MicVocal size={38} strokeWidth={2.2} /></div>
   <h1>Jojo's <span>Karaoke</span></h1>
   <p class="lead">Sing together. Lyrics on every phone, one shared queue.</p>
 
@@ -48,25 +50,26 @@
     <label for="code">Join a party</label>
     <div class="row">
       <input id="code" bind:value={code} maxlength="4" autocomplete="off" autocapitalize="characters"
-             placeholder="CODE" inputmode="text" />
+             placeholder="CODE" inputmode="text" aria-describedby={error ? 'home-error' : undefined} />
       <button class="primary" type="submit">Join</button>
     </div>
   </form>
 
-  <div class="card">
-    <button class="primary big" onclick={host} disabled={busy}>{busy ? 'Starting…' : '🎤 Host a party'}</button>
-    <p class="hint">Open this on the TV or laptop that plays the music. Its songs (My songs) are offered to the
-      guests, who scan the QR code. No account needed.</p>
+  <div class="card host">
+    <button class="primary big" onclick={host} disabled={busy}><MicVocal size={22} />{busy ? 'Starting…' : 'Host a party'}</button>
+    <p class="hint">Open this on the TV or laptop that plays the music. Guests scan the QR code; your songs are
+      offered to them. No account needed.</p>
     {#if recent.length}
-      <p class="hint">Resume: {#each recent as c}<button class="link" onclick={() => navigate(`/screen/${c}`)}>{c}</button> {/each}</p>
+      <div class="resume"><span class="hint">Resume:</span>
+        {#each recent as c}<button class="small" onclick={() => navigate(`/screen/${c}`)}><Play size={14} /><span class="code">{c}</span></button>{/each}</div>
     {/if}
   </div>
+  {#if error}<p class="error" id="home-error" role="alert">{error}</p>{/if}
 
-  <div class="row center">
-    <button onclick={() => navigate('/songs')}>🎵 My songs</button>
-    <button onclick={() => navigate('/make')}>🎛 Make a song</button>
-    <button onclick={() => navigate('/solo')}>Play a .jkp file</button>
-    <button onclick={() => navigate('/settings')}>Settings & online library</button>
-  </div>
-  {#if error}<p class="error">{error}</p>{/if}
+  <nav class="tiles" aria-label="More">
+    <button class="tile" onclick={() => navigate('/songs')}><Library size={24} /><b>My songs</b><span>Play, fix and share</span></button>
+    <button class="tile" onclick={() => navigate('/make')}><Sparkles size={24} /><b>Make a song</b><span>From a file you own</span></button>
+    <button class="tile" onclick={() => navigate('/solo')}><FileMusic size={24} /><b>Open a file</b><span>Play a .jkp package</span></button>
+    <button class="tile" onclick={() => navigate('/settings')}><Settings size={24} /><b>Settings</b><span>Speaker delay, online library</span></button>
+  </nav>
 </main>

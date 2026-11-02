@@ -1,6 +1,8 @@
 <script lang="ts">
   // "My songs": karaoke songs stored on this device.
   import { onDestroy } from 'svelte';
+  import { CloudUpload, Download, FileUp, Library, PencilLine, Play, Plus, Search, Trash2 } from '@lucide/svelte';
+  import TopBar from '../components/TopBar.svelte';
   import { mmss } from '../lib/format';
   import {
     type StoredSong, deleteSong, downloadBytes, exportJkp, fileName, importJkp, listSongs, onLibraryChange, storageInfo, toPackage,
@@ -64,28 +66,34 @@
 </script>
 
 <main class="page songs-page">
-  <header class="bar"><button class="link" onclick={() => navigate('/')}>← Home</button><h2>My songs</h2>
-    <button class="primary" onclick={() => navigate('/make')}>＋ Make</button></header>
-  <p class="hint">Stored in this app on this device{#if info} · {songs.length} songs · {mb(info.used)} used{#if !info.persisted} · the browser may clear them if the device runs low on space, so keep downloads of songs you care about{/if}{/if}.</p>
-  {#if msg}<p class="hint">{msg}</p>{/if}
-  <div class="row">
-    <input bind:value={filter} placeholder="Search" style="flex:1" />
-    <label class="button-like">Import .jkp<input type="file" accept=".jkp,application/zip" multiple onchange={importFiles} hidden /></label>
+  <TopBar title="My songs">
+    <button class="primary" onclick={() => navigate('/make')}><Plus size={18} />Make</button>
+  </TopBar>
+  <p class="hint">Stored in this app on this device{info ? ` · ${songs.length} ${songs.length === 1 ? 'song' : 'songs'} · ${mb(info.used)} used` : ''}.{#if info && !info.persisted}
+    The browser may clear them if the device runs low on space, so keep downloads of songs you care about.{/if}</p>
+  {#if msg}<p class="hint" role="status">{msg}</p>{/if}
+  <div class="row" style="margin:.6rem 0">
+    <div class="search-box"><Search size={18} /><input type="search" bind:value={filter} placeholder="Search" aria-label="Search my songs" /></div>
+    <label class="button-like"><FileUp size={18} />Import .jkp<input type="file" accept=".jkp,application/zip" multiple onchange={importFiles} hidden /></label>
   </div>
   <ul class="songs local">
     {#each shown as s (s.id)}
       <li>
-        <span class="what"><b>{s.manifest.title}</b> <span class="muted">{s.manifest.artist} · {mmss(s.manifest.durationMs)} · {mb(s.size)}</span></span>
+        <span class="what"><b>{s.manifest.title}</b> <span class="muted">{s.manifest.artist}{s.manifest.artist ? ' · ' : ''}{mmss(s.manifest.durationMs)} · {mb(s.size)}</span></span>
         <span class="acts">
-          <button class="small" onclick={() => play(s)}>▶ Play</button>
-          <button class="small" onclick={() => edit(s)}>Timing</button>
-          <button class="small" onclick={() => download(s)}>Download</button>
-          {#if store.ownerToken}<button class="small" onclick={() => upload(s)} disabled={busy === s.id}>{busy === s.id ? '…' : 'Upload'}</button>{/if}
-          <button class="small danger" onclick={() => remove(s)}>✕</button>
+          <button class="small primary" onclick={() => play(s)}><Play size={15} />Play</button>
+          <button class="small" onclick={() => edit(s)} title="Fix the timing"><PencilLine size={15} />Timing</button>
+          <button class="small icon" onclick={() => download(s)} title="Download .jkp" aria-label="Download {s.manifest.title}"><Download size={16} /></button>
+          {#if store.ownerToken}<button class="small icon" onclick={() => upload(s)} disabled={busy === s.id} title="Upload to my online library" aria-label="Upload {s.manifest.title}"><CloudUpload size={16} /></button>{/if}
+          <button class="small icon danger" onclick={() => remove(s)} title="Delete" aria-label="Delete {s.manifest.title}"><Trash2 size={16} /></button>
         </span>
       </li>
     {:else}
-      <li class="muted">{filter ? 'No match.' : 'No songs on this device yet. Make one, or import a .jkp file.'}</li>
+      <li class="empty-state" style="border:none; background:none">
+        {#if filter}<span>No match for “{filter}”.</span>
+        {:else}<Library size={40} /><b>No songs on this device yet.</b><span>Make one from a song file you own, or import a .jkp package.</span>
+          <button class="primary" onclick={() => navigate('/make')}><Plus size={18} />Make a song</button>{/if}
+      </li>
     {/each}
   </ul>
 </main>

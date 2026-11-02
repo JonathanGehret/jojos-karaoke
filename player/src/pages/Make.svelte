@@ -2,14 +2,18 @@
   // Make karaoke from a song file right here in the browser (no install), or help a party
   // by processing its on-the-spot requests on this device.
   import { onDestroy } from 'svelte';
+  import { Cpu, Download, FileAudio, Library, Pause, Play, Sparkles, TriangleAlert, Users, Zap } from '@lucide/svelte';
   import type { Lyrics } from '$shared/lyrics';
+  import LyricsFinder from '../components/LyricsFinder.svelte';
   import LyricsView from '../components/LyricsView.svelte';
+  import TopBar from '../components/TopBar.svelte';
+  import { audioDuration, guessFromFilename, songInfo } from '../lib/audioTags';
   import { AudioEngine, decode, unlockAudio } from '../lib/audio/engine';
   import { bufferOf } from '../lib/jkp';
   import { mmss } from '../lib/format';
   import { downloadBytes, exportJkp, fileName, saveSong } from '../lib/localLibrary';
   import { canEncodeOpus } from '../lib/make/encode';
-  import { type MadeSong, SEPARATION_MODEL, guessFromFilename, makeSong, makerWorker, uploadSong } from '../lib/make/pipeline';
+  import { type MadeSong, SEPARATION_MODEL, makeSong, makerWorker, uploadSong } from '../lib/make/pipeline';
   import { BrowserJobRunner } from '../lib/make/runner';
   import { navigate } from '../lib/nav.svelte';
   import { store } from '../lib/store';
@@ -25,6 +29,9 @@
   let title = $state('');
   let artist = $state('');
   let lyricsText = $state('');
+  let fileDuration = $state(0);
+  let finder = $state<LyricsFinder | null>(null);
+  let dragOver = $state(false);
   let language = $state('');
   let separateOn = $state(true);
   let asrOn = $state(params.get('asr') !== 'off');
@@ -61,10 +68,29 @@
     opusOk = await canEncodeOpus();
   })();
 
-  function pick(e: Event) {
-    file = (e.target as HTMLInputElement).files?.[0] ?? null;
-    if (file && !title) ({ title, artist } = guessFromFilename(file.name));
+  async function pick(f: File | null) {
+    if (!f) return;
+    file = f;
     result = null; uploaded = null; saved = false; error = null;
+    lyricsText = ''; fileDuration = 0;
+    finder?.reset();
+    ({ title, artist } = guessFromFilename(f.name));   // right away; the file's tags refine it below
+    const info = await songInfo(f);
+    if (file !== f) return;
+    ({ title, artist } = info);
+    const d = await audioDuration(f);
+    if (file !== f) return;
+    fileDuration = d;
+    // look the lyrics up right away so they can be checked before the long part starts
+    finder?.search(true);
+  }
+
+  function drop(e: DragEvent) {
+    // file drop from the desktop (not reordering, so HTML5 drag events are fine here)
+    e.preventDefault();
+    dragOver = false;
+    const f = e.dataTransfer?.files?.[0];
+    if (f && !busy) pick(f);
   }
 
   const STAGES: Record<string, string> = {
@@ -81,6 +107,7 @@
     try {
       result = await makeSong(file, {
         title: title.trim() || 'Untitled', artist: artist.trim(), lyricsText, language: language || undefined,
+        lyricsSource: lyricsText.trim() && finderChose() ? 'lrclib' : 'user',
         separate: separateOn, asr: asrOn, token, modelUrl, signal: ctl.signal,
         onProgress: (s, p, d) => {
           stage = s; pct = p; detail = d ?? '';
@@ -101,6 +128,7 @@
   }
 
   function cancel() { ctl?.abort(); }
+  const finderChose = () => !!finder?.chosenText() && finder.chosenText() === lyricsText;
 
   async function preview() {
     if (!result) return;
@@ -142,49 +170,76 @@
 </script>
 
 <main class="page make">
-  <header class="bar"><button class="link" onclick={() => navigate('/')}>← Home</button><h2>Make a song</h2></header>
+  <TopBar title="Make a song" />
 
-  <p class="hint">Everything runs here in your browser: nothing to install. The first time, the AI models
-    download once (about {SEPARATION_MODEL.sizeMb} MB for vocal removal, 40–250 MB for word timing) and are kept for next time.</p>
-  <p class="hint">
-    {#if gpu === null}Checking this device…
-    {:else if gpu}✓ Graphics card available: about 1–3 minutes per song.
-    {:else}⚠ No WebGPU here: it works on the CPU but can take 10+ minutes per song. Chrome on a laptop/desktop is fastest.{/if}
-    {#if opusOk === false}<br /><span class="error">This browser can't save Opus audio (needs Chrome, Edge or a recent Safari/Firefox).</span>{/if}
-  </p>
+  {#if gpu === null}
+    <div class="device-note"><Cpu size={18} /><span>Checking this device…</span></div>
+  {:else if gpu}
+    <div class="device-note good"><Zap size={18} /><span>Graphics card available: about 1–3 minutes per song.</span></div>
+  {:else}
+    <div class="device-note slow"><TriangleAlert size={18} /><span>No WebGPU here: it works on the CPU but can take 10+ minutes
+      per song. Chrome on a laptop or desktop is fastest.</span></div>
+  {/if}
+  {#if opusOk === false}<p class="error">This browser can't save Opus audio (needs Chrome, Edge or a recent Safari/Firefox).</p>{/if}
 
-  <form class="card stack" onsubmit={make}>
-    <label>Song file (one you own)<input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pick} disabled={busy} /></label>
-    <div class="row">
-      <input bind:value={title} placeholder="Title" maxlength="200" required disabled={busy} style="flex:2" />
-      <input bind:value={artist} placeholder="Artist" maxlength="200" disabled={busy} style="flex:1" />
-    </div>
-    <textarea bind:value={lyricsText} rows="5" disabled={busy}
-      placeholder="Lyrics (optional, plain text or .lrc). Empty: looked up online, otherwise transcribed."></textarea>
-    <div class="row">
-      <label class="row">Language
-        <select bind:value={language} disabled={busy} style="width:auto">
-          <option value="">auto / English</option><option value="de">Deutsch</option><option value="es">Español</option>
-          <option value="fr">Français</option><option value="it">Italiano</option><option value="nl">Nederlands</option>
-          <option value="pt">Português</option><option value="pl">Polski</option><option value="tr">Türkçe</option>
-          <option value="ja">日本語</option><option value="ko">한국어</option>
-        </select></label>
-      <label class="row"><input type="checkbox" bind:checked={separateOn} disabled={busy} /> Remove vocals</label>
-      <label class="row"><input type="checkbox" bind:checked={asrOn} disabled={busy} /> AI word timing</label>
-      {#if token}<label class="row"><input type="checkbox" bind:checked={alsoOnline} disabled={busy} /> Also add to my online library</label>{/if}
-    </div>
+  <form class="card steps stack" onsubmit={make}>
+    <section class="step">
+      <h3>Song file</h3>
+      <label class="dropzone" class:over={dragOver}
+        ondragover={(e) => { e.preventDefault(); dragOver = true; }} ondragleave={() => (dragOver = false)} ondrop={drop}>
+        <FileAudio size={30} />
+        <span class="what">
+          {#if file}<b>{file.name}</b><span class="hint">Tap to pick another</span>
+          {:else}<b>Choose a song you own</b><span class="hint">MP3, M4A, FLAC, WAV, OGG · or drop it here</span>{/if}
+        </span>
+        <input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" disabled={busy}
+          onchange={(e) => pick((e.target as HTMLInputElement).files?.[0] ?? null)} />
+      </label>
+      {#if file}
+        <div class="row" style="margin-top:.7rem">
+          <input bind:value={title} placeholder="Title" aria-label="Title" maxlength="200" required disabled={busy} style="flex:2; min-width:10em" />
+          <input bind:value={artist} placeholder="Artist" aria-label="Artist" maxlength="200" disabled={busy} style="flex:1; min-width:8em" />
+        </div>
+      {/if}
+    </section>
+
+    <section class="step">
+      <h3>Lyrics</h3>
+      <LyricsFinder bind:this={finder} bind:value={lyricsText} {title} {artist} duration={fileDuration} disabled={busy}
+        placeholder="Plain text or .lrc. Leave empty to look up online, or transcribe with AI." />
+      {#if !lyricsText.trim()}<p class="hint">No lyrics picked: they're looked up again while making, otherwise the AI writes them down.</p>{/if}
+    </section>
+
+    <section class="step">
+      <h3>Options</h3>
+      <div class="options">
+        <label>Language
+          <select bind:value={language} disabled={busy} style="width:auto">
+            <option value="">auto / English</option><option value="de">Deutsch</option><option value="es">Español</option>
+            <option value="fr">Français</option><option value="it">Italiano</option><option value="nl">Nederlands</option>
+            <option value="pt">Português</option><option value="pl">Polski</option><option value="tr">Türkçe</option>
+            <option value="ja">日本語</option><option value="ko">한국어</option>
+          </select></label>
+        <label><input type="checkbox" bind:checked={separateOn} disabled={busy} /> Remove vocals</label>
+        <label><input type="checkbox" bind:checked={asrOn} disabled={busy} /> AI word timing</label>
+        {#if token}<label><input type="checkbox" bind:checked={alsoOnline} disabled={busy} /> Also add to my online library</label>{/if}
+      </div>
+      <p class="hint">The first time, the AI models download once (about {SEPARATION_MODEL.sizeMb} MB for vocal removal,
+        40–250 MB for word timing) and stay on this device.</p>
+    </section>
+
     {#if busy}
-      <div class="progress-block">
-        <div class="meter"><div style:width="{pct}%"></div></div>
-        <div class="row"><span>{STAGES[stage] ?? stage} {detail ? `(${detail})` : ''}</span>
+      <div class="progress-block" aria-live="polite">
+        <div class="meter" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><div style:width="{pct}%"></div></div>
+        <div class="row"><span>{STAGES[stage] ?? stage} {detail ? `(${detail})` : ''}</span><span class="spacer"></span>
           <span class="muted">{pct}%{#if eta} · ~{Math.ceil(eta / 60)} min left{/if}</span>
-          <button type="button" class="link danger" onclick={cancel}>cancel</button></div>
+          <button type="button" class="small danger" onclick={cancel}>Cancel</button></div>
         <p class="hint">Keep this tab open.</p>
       </div>
     {:else}
-      <button class="primary" type="submit" disabled={!file || opusOk === false}>Make karaoke</button>
+      <button class="primary big" type="submit" disabled={!file || opusOk === false}><Sparkles size={20} />Make karaoke</button>
     {/if}
-    {#if error}<p class="error">{error}</p>{/if}
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>
 
   {#if result}
@@ -193,30 +248,32 @@
       {#each result.warnings as w}<p class="hint warn">{w}</p>{/each}
       {#if saved}<p class="ok">✓ Saved on this device (My songs).</p>{/if}
       {#if uploaded}<p class="ok">✓ Added to your online library.</p>{/if}
-      {#if previewLyrics}<LyricsView lyrics={previewLyrics} clock={() => engine.positionMs()} size="phone" />{/if}
-      <div class="row seek"><span>{mmss(pos)}</span>
+      {#if previewLyrics}<div class="preview-box"><LyricsView lyrics={previewLyrics} clock={() => engine.positionMs()} size="phone" /></div>{/if}
+      <div class="row seek"><button class="primary icon" onclick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
+          {#if playing}<Pause size={20} />{:else}<Play size={20} />{/if}</button>
+        <span class="muted">{mmss(pos)}</span>
         <input type="range" min="0" max={dur || 1} value={pos} aria-label="Position"
           oninput={(e) => { pos = +(e.target as HTMLInputElement).value; engine.seek(pos); }} />
-        <span>{mmss(dur)}</span>
-        <button onclick={() => engine.seek(Math.max(0, engine.positionMs() - 10000))} aria-label="Back 10 seconds">−10s</button>
-        <button onclick={() => engine.seek(engine.positionMs() + 10000)} aria-label="Forward 10 seconds">+10s</button></div>
-      <div class="row">
-        <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'} Preview</button>
+        <span class="muted">{mmss(dur)}</span>
+        <button class="small" onclick={() => engine.seek(Math.max(0, engine.positionMs() - 10000))} aria-label="Back 10 seconds">−10s</button>
+        <button class="small" onclick={() => engine.seek(engine.positionMs() + 10000)} aria-label="Forward 10 seconds">+10s</button></div>
+      <div class="row" style="margin-top:.6rem">
         <label class="row">Guide vocal <input type="range" min="0" max="1" step="0.1" value="0"
           oninput={(e) => engine.setVocal(+(e.target as HTMLInputElement).value)} style="width:8em" /></label>
-        <button onclick={download}>Download .jkp</button>
-        <button onclick={() => navigate('/songs')}>My songs</button>
+        <span class="spacer"></span>
+        <button onclick={download}><Download size={18} />Download .jkp</button>
+        <button onclick={() => navigate('/songs')}><Library size={18} />My songs</button>
       </div>
     </section>
   {/if}
 
   {#if helperKey || token}
     <section class="card">
-      <h3>Help at a party</h3>
+      <h3><Users size={18} /> Help at a party</h3>
       <p class="hint">Make the songs guests request, on this device. Keep this tab open while the party runs.
         The host's screen gets each finished song, and the guest who brought it can download it.</p>
       <form class="row" onsubmit={help}>
-        <input bind:value={roomCode} maxlength="4" placeholder="Room code" style="width:7em; text-transform:uppercase" />
+        <input bind:value={roomCode} maxlength="4" placeholder="Room code" aria-label="Room code" style="width:7em; text-transform:uppercase" />
         <button type="submit">{runner ? 'Restart' : 'Start'}</button>
         {#if runner}<button type="button" onclick={() => { runner?.stop(); runner = null; runnerJob = null; }}>Stop</button>{/if}
       </form>

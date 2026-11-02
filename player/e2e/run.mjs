@@ -149,7 +149,8 @@ try {
   await guest.getByRole('button', { name: 'Request' }).tap();
   await guest.locator('input[type=file]').setInputFiles(wav);
   check(await guest.getByPlaceholder('Title').inputValue() === 'Fresh', 'title and artist guessed from the file name');
-  await guest.getByPlaceholder(/Lyrics/).fill('la lo\nli lu');
+  await guest.getByRole('button', { name: 'Paste lyrics yourself' }).tap();
+  await guest.getByLabel('Lyrics text').fill('la lo\nli lu');
   await guest.getByRole('button', { name: 'Request song' }).tap();
   await guest.getByText(/making…/).waitFor({ timeout: 10000 });
   check(true, 'request shows in the queue as "making…"');

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TopBar from '../components/TopBar.svelte';
   import type { SongSummary } from '$shared/protocol';
   import * as api from '../lib/api';
   import { audioContext, unlockAudio } from '../lib/audio/engine';
@@ -124,7 +125,7 @@
 </script>
 
 <main class="page">
-  <header class="bar"><button class="link" onclick={() => navigate('/')}>← Home</button><h2>Library & settings</h2></header>
+  <TopBar title="Settings & library" />
 
   {#if error}<p class="error">{error}</p>{/if}
 

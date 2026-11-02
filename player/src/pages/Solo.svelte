@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { FileMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw } from '@lucide/svelte';
+  import TopBar from '../components/TopBar.svelte';
   // Play a local .jkp package on this device, with all the audio controls.
   import { onDestroy } from 'svelte';
   import { type Lyrics, shiftLyrics } from '$shared/lyrics';
@@ -55,7 +57,8 @@
     playing = engine.playing;
   }
 
-  const t = setInterval(() => (pos = engine.positionMs()), 250);
+  let dur = $state(0);
+  const t = setInterval(() => { pos = engine.positionMs(); dur = engine.durationMs; }, 250);
   onDestroy(() => { clearInterval(t); engine.stop(); });
 
   function edit() {
@@ -75,32 +78,33 @@
 <svelte:window onkeydown={onKey} />
 
 <main class="solo">
-  <header class="bar"><button class="link" onclick={() => navigate('/')}>← Home</button>
-    <h2>{pkg ? pkg.manifest.title : 'Play a file'}</h2>{#if pkg}<span class="muted">{pkg.manifest.artist}</span>{/if}</header>
+  <TopBar title={pkg ? pkg.manifest.title : 'Play a file'}>{#if pkg}<span class="muted">{pkg.manifest.artist}</span>{/if}</TopBar>
 
   {#if !lyrics}
-    <div class="card stack">
-      {#if pkg}<button class="primary big" onclick={prepare}>▶ Load “{pkg.manifest.title}”</button>{/if}
-      <label>Open a karaoke package (.jkp)<input type="file" accept=".jkp,application/zip" onchange={open} /></label>
-      <p class="hint">Make one with <code>jojo make song.mp3</code>.</p>
-      {#if error}<p class="error">{error}</p>{/if}
+    <div class="card stack" style="max-width:640px; width:100%; margin:1rem auto">
+      {#if pkg}<button class="primary big" onclick={prepare}><Play size={22} />Load “{pkg.manifest.title}”</button>{/if}
+      <label class="dropzone"><FileMusic size={28} />
+        <span class="what"><b>Open a karaoke package</b><span class="hint">A .jkp file from My songs or <code>jojo make</code></span></span>
+        <input type="file" accept=".jkp,application/zip" onchange={open} /></label>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
     </div>
   {:else}
     <LyricsView {lyrics} clock={() => engine.positionMs() - store.deviceOffsetMs} />
     <footer class="controls">
       <div class="progress"><span>{mmss(pos)}</span>
-        <input type="range" min="0" max={engine.durationMs || 1} value={pos} oninput={(e) => engine.seek(+(e.target as HTMLInputElement).value)} />
-        <span>{mmss(engine.durationMs)}</span></div>
+        <input type="range" min="0" max={dur || 1} value={pos} aria-label="Position" oninput={(e) => engine.seek(+(e.target as HTMLInputElement).value)} />
+        <span>{mmss(dur)}</span></div>
       <div class="row">
-        <button onclick={() => engine.seek(0)}>⏮</button>
-        <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'}</button>
-        <span class="group">Key <button onclick={() => engine.setKey(--key)}>−</button><b>{key}</b><button onclick={() => engine.setKey(++key)}>+</button></span>
-        <span class="group">Tempo <button onclick={() => { rate = Math.max(0.8, rate - 0.05); engine.setRate(rate); }}>−</button><b>{Math.round(rate * 100)}%</b><button onclick={() => { rate = Math.min(1.2, rate + 0.05); engine.setRate(rate); }}>+</button></span>
+        <button class="icon" onclick={() => engine.seek(0)} aria-label="Restart"><RotateCcw size={20} /></button>
+        <button class="primary play" onclick={toggle} aria-label={playing ? 'Pause' : 'Play'}>{#if playing}<Pause size={26} />{:else}<Play size={26} />{/if}</button>
+        <span class="group">Key <button onclick={() => engine.setKey(--key)} aria-label="Key down"><Minus size={16} /></button><b>{key > 0 ? '+' : ''}{key}</b><button onclick={() => engine.setKey(++key)} aria-label="Key up"><Plus size={16} /></button></span>
+        <span class="group">Tempo <button onclick={() => { rate = Math.max(0.8, rate - 0.05); engine.setRate(rate); }} aria-label="Slower"><Minus size={16} /></button><b>{Math.round(rate * 100)}%</b><button onclick={() => { rate = Math.min(1.2, rate + 0.05); engine.setRate(rate); }} aria-label="Faster"><Plus size={16} /></button></span>
         <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" bind:value={vocal}
           oninput={() => { engine.setVocal(vocal); store.vocal = vocal; }} disabled={!pkg?.manifest.files.vocals} /></label>
-        <span class="group">Lyrics <button onclick={() => { offset -= 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }}>−</button><b>{offset} ms</b><button onclick={() => { offset += 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }}>+</button></span>
-        <button onclick={toggleFullscreen}>⛶</button>
-        <button onclick={edit}>Edit timing</button>
+        <span class="group">Lyrics <button onclick={() => { offset -= 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }} aria-label="Lyrics earlier"><Minus size={16} /></button><b>{offset} ms</b><button onclick={() => { offset += 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }} aria-label="Lyrics later"><Plus size={16} /></button></span>
+        <span class="spacer"></span>
+        <button onclick={edit}><PencilLine size={18} />Edit timing</button>
+        <button class="icon" onclick={toggleFullscreen} aria-label="Fullscreen"><Maximize size={18} /></button>
       </div>
     </footer>
   {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   // Queue with Pointer Events drag-to-reorder for the host (works with touch; no HTML5 drag).
+  import { ArrowUpToLine, GripVertical, LoaderCircle, X } from '@lucide/svelte';
   import type { QueueItem } from '$shared/protocol';
 
   let {
@@ -56,14 +57,14 @@
         style:transform={dragId === it.id ? `translateY(${dragY}px)` : undefined}>
       {#if admin && !compact}
         <button class="handle" aria-label="Drag to reorder" onpointerdown={(e) => down(e, it.id)}
-                onpointermove={move} onpointerup={up} onpointercancel={up}>⠿</button>
+                onpointermove={move} onpointerup={up} onpointercancel={up}><GripVertical size={20} /></button>
       {/if}
       <span class="pos">{i + 1}</span>
       <span class="what">
         <span class="title">{it.title}{#if it.artist}<span class="artist"> · {it.artist}</span>{/if}</span>
         <span class="who">{it.nickname}
           {#if it.status === 'processing'}
-            <span class="badge proc">making… {Math.round(it.progress?.pct ?? 0)}%{#if it.progress?.etaS} · ~{Math.ceil(it.progress.etaS / 60)} min{/if}</span>
+            <span class="badge proc"><LoaderCircle size={12} class="spin" />making… {Math.round(it.progress?.pct ?? 0)}%{#if it.progress?.etaS} · ~{Math.ceil(it.progress.etaS / 60)} min{/if}</span>
           {:else if it.status === 'failed'}
             <span class="badge fail" title={it.error}>failed</span>
           {/if}
@@ -71,8 +72,8 @@
       </span>
       {#if !compact && (admin || it.memberId === youId)}
         <span class="acts">
-          {#if admin && i > 0}<button class="small" onclick={() => onplaynext?.(it.id)} title="Play next">⤒</button>{/if}
-          <button class="small" onclick={() => onremove?.(it.id)} title="Remove">✕</button>
+          {#if admin && i > 0}<button class="small icon" onclick={() => onplaynext?.(it.id)} title="Play next" aria-label="Play {it.title} next"><ArrowUpToLine size={16} /></button>{/if}
+          <button class="small icon" onclick={() => onremove?.(it.id)} title="Remove" aria-label="Remove {it.title}"><X size={16} /></button>
         </span>
       {/if}
     </li>

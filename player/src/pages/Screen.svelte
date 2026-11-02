@@ -2,6 +2,9 @@
   // The host screen: plays the audio (the only device that does), shows lyrics, QR, queue.
   // It is the playback authority: guests follow the `playback` messages it publishes.
   import { onDestroy } from 'svelte';
+  import {
+    Cast, ListMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw, Settings2, SkipForward, Smartphone, Users, X,
+  } from '@lucide/svelte';
   import { type Lyrics, shiftLyrics } from '$shared/lyrics';
   import type { QueueItem, ServerMsg } from '$shared/protocol';
   import LyricsView from '../components/LyricsView.svelte';
@@ -264,7 +267,9 @@
     }
   });
 
-  const posTimer = setInterval(() => { pos = engine.positionMs(); }, 250);
+  // engine fields aren't reactive: copy them on a timer
+  let dur = $state(0);
+  const posTimer = setInterval(() => { pos = engine.positionMs(); dur = engine.durationMs; }, 250);
   const pubTimer = setInterval(() => { if (playing) publish(); }, 5000);
 
   function wake() {
@@ -319,20 +324,20 @@
 <svelte:window onkeydown={onKey} onpointermove={wake} />
 
 {#if !admin}
-  <main class="page"><p class="error">This device is not the host of room {code}.</p>
-    <button onclick={() => navigate(`/join/${code}`)}>Join as a guest</button></main>
+  <main class="page"><div class="empty-state"><p class="error">This device is not the host of room {code}.</p>
+    <button onclick={() => navigate(`/join/${code}`)}>Join as a guest</button></div></main>
 {:else}
   <div class="screen" class:queue-open={showQueue}>
     <div class="stage" style:--cover={media?.urls.cover ? `url("${media.urls.cover}")` : 'none'}>
       <header class="top">
         <div class="room">
-          <Qr text={joinUrl(code)} size={120} />
+          {#if loadedItem || !started}<Qr text={joinUrl(code)} size={120} />{/if}
           <div><div class="code">{code}</div><div class="muted">{location.host}/join</div>
-            <div class="muted">{guests} {guests === 1 ? 'guest' : 'guests'}{#if conn?.state?.workersOnline} · {conn.state.workersOnline} maker online{/if}</div></div>
+            <div class="muted row" style="gap:.3rem"><Users size={14} />{guests} {guests === 1 ? 'guest' : 'guests'}{#if conn?.state?.workersOnline} · {conn.state.workersOnline} maker online{/if}</div></div>
         </div>
         {#if loadedItem}
           <div class="now"><div class="title">{loadedItem.title}</div>
-            <div class="muted">{loadedItem.artist} · sung by <b>{loadedItem.nickname}</b></div></div>
+            <div class="muted">{loadedItem.artist}{loadedItem.artist ? ' · ' : ''}sung by <b>{loadedItem.nickname}</b></div></div>
         {/if}
         <div class="status">
           {#if conn?.status !== 'open'}<span class="badge fail">{conn?.status === 'gone' ? 'room closed' : 'reconnecting…'}</span>{/if}
@@ -342,26 +347,31 @@
       {#if !started}
         <div class="center-card">
           <h2>Room {code}</h2>
-          <p>Scan the code to join. Start the party when you're ready.</p>
-          <button class="primary big" onclick={start}>▶ Start the party</button>
-          <p class="hint">Space play/pause · N skip · ←/→ seek · +/− key · [ ] tempo · V guide vocal · F fullscreen · Q queue · , . lyrics offset</p>
+          <p class="muted">Guests scan the code to join. Start the party when you're ready.</p>
+          <button class="primary big" onclick={start}><Play size={22} />Start the party</button>
+          <div class="keys" aria-label="Keyboard shortcuts">
+            <span><kbd>Space</kbd>play/pause</span><span><kbd>N</kbd>skip</span><span><kbd>←</kbd><kbd>→</kbd>seek</span>
+            <span><kbd>+</kbd><kbd>−</kbd>key</span><span><kbd>[</kbd><kbd>]</kbd>tempo</span><span><kbd>V</kbd>guide vocal</span>
+            <span><kbd>F</kbd>fullscreen</span><span><kbd>Q</kbd>queue</span><span><kbd>,</kbd><kbd>.</kbd>lyrics offset</span>
+          </div>
         </div>
       {:else if countdown > 0 && loadedItem}
         <div class="center-card upnext">
-          <div class="muted">Up next</div>
+          <div class="label">Up next</div>
           <h2>{loadedItem.nickname}</h2>
-          <p class="title">{loadedItem.title} <span class="muted">· {loadedItem.artist}</span></p>
-          <div class="count">{countdown}</div>
-          <button onclick={play}>Start now</button>
+          <p class="title">{loadedItem.title}{#if loadedItem.artist}<span class="muted">{` · ${loadedItem.artist}`}</span>{/if}</p>
+          <div class="count" aria-live="polite">{countdown}</div>
+          <button onclick={play}><Play size={18} />Start now</button>
         </div>
       {:else if loading}
         <div class="center-card"><p>Loading “{loadedItem?.title}”…</p></div>
       {:else if !loadedItem}
         <div class="center-card">
           <h2>{upNext ? 'Starting…' : 'Pick a song!'}</h2>
-          {#if !conn?.library.length}<p class="hint">No songs yet: add some in <b>My songs</b> on this device, or guests can bring their own in the Request tab.</p>{/if}
-          <p>Scan the QR code or open <b>{location.host}/join</b> and enter <b>{code}</b>.</p>
-          <Qr text={joinUrl(code)} size={260} />
+          <p>Scan the code with your phone, or open <b>{location.host}/join</b> and enter <b class="code">{code}</b>.</p>
+          <Qr text={joinUrl(code)} size={240} />
+          {#if !conn?.library.length}<p class="hint">No songs yet: add some in <b>My songs</b> on this device, or guests can bring
+            their own in the Request tab.</p>{/if}
         </div>
       {:else if lyrics && !lyrics.lines.length}
         <div class="center-card"><p>This song has no lyrics yet.</p></div>
@@ -375,27 +385,33 @@
         {#each reactions as r (r.id)}<span style:left="{r.x}%">{r.emoji}</span>{/each}
       </div>
 
-      {#if started && showControls}
-        <footer class="controls">
-          <div class="progress"><span>{mmss(pos)}</span>
-            <input type="range" min="0" max={engine.durationMs || 1} value={pos}
-                   oninput={(e) => engine.seek(+(e.target as HTMLInputElement).value)} onchange={publish} />
-            <span>{mmss(engine.durationMs)}</span></div>
+      {#if started}
+        <footer class="controls" class:hidden={!showControls && !!loadedItem}>
+          {#if loadedItem}
+            <div class="progress"><span>{mmss(pos)}</span>
+              <input type="range" min="0" max={dur || 1} value={pos} aria-label="Position"
+                     oninput={(e) => engine.seek(+(e.target as HTMLInputElement).value)} onchange={publish} />
+              <span>{mmss(dur)}</span></div>
+          {/if}
           <div class="row">
-            <button onclick={restart} title="Restart">⏮</button>
-            <button class="primary" onclick={toggle} disabled={!media}>{playing ? '⏸' : '▶'}</button>
-            <button onclick={skip} title="Skip">⏭</button>
-            <span class="group">Key <button onclick={() => setKey(key - 1)}>−</button><b>{key > 0 ? '+' : ''}{key}</b><button onclick={() => setKey(key + 1)}>+</button></span>
-            <span class="group">Tempo <button onclick={() => setRate(rate - 0.05)}>−</button><b>{Math.round(rate * 100)}%</b><button onclick={() => setRate(rate + 0.05)}>+</button></span>
-            <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" value={vocal}
-                   oninput={(e) => setVocal(+(e.target as HTMLInputElement).value)} disabled={!media?.urls.vocals} /></label>
-            <span class="group">Lyrics <button onclick={() => nudgeOffset(-50)}>−</button><b>{songOffset} ms</b><button onclick={() => nudgeOffset(50)}>+</button>
-              {#if offsetDirty}<button class="small" onclick={saveOffset}>save</button>{/if}</span>
-            <button onclick={() => (showQueue = !showQueue)}>Queue ({queue.length})</button>
-            <button onclick={toggleFullscreen}>⛶</button>
-            {#if canCast}<button onclick={cast} title="Show on a TV / Chromecast">Cast</button>{/if}
-            <button onclick={() => (showAdminQr = !showAdminQr)} title="Control from your phone">📱</button>
-            {#if loadedItem?.songId && source === 'online'}<button onclick={() => navigate(`/edit/${code}/${loadedItem!.songId}`)}>Edit timing</button>{/if}
+            {#if loadedItem}
+              <button class="icon" onclick={restart} title="Restart" aria-label="Restart"><RotateCcw size={20} /></button>
+              <button class="primary play" onclick={toggle} disabled={!media} aria-label={playing ? 'Pause' : 'Play'}>
+                {#if playing}<Pause size={26} />{:else}<Play size={26} />{/if}</button>
+              <button class="icon" onclick={skip} title="Skip (N)" aria-label="Skip"><SkipForward size={20} /></button>
+              <span class="group">Key <button onclick={() => setKey(key - 1)} aria-label="Key down"><Minus size={16} /></button><b>{key > 0 ? '+' : ''}{key}</b><button onclick={() => setKey(key + 1)} aria-label="Key up"><Plus size={16} /></button></span>
+              <span class="group">Tempo <button onclick={() => setRate(rate - 0.05)} aria-label="Slower"><Minus size={16} /></button><b>{Math.round(rate * 100)}%</b><button onclick={() => setRate(rate + 0.05)} aria-label="Faster"><Plus size={16} /></button></span>
+              <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" value={vocal}
+                     oninput={(e) => setVocal(+(e.target as HTMLInputElement).value)} disabled={!media?.urls.vocals} /></label>
+              <span class="group">Lyrics <button onclick={() => nudgeOffset(-50)} aria-label="Lyrics earlier"><Minus size={16} /></button><b>{songOffset} ms</b><button onclick={() => nudgeOffset(50)} aria-label="Lyrics later"><Plus size={16} /></button>
+                {#if offsetDirty}<button class="small" onclick={saveOffset}>save</button>{/if}</span>
+            {/if}
+            <span class="spacer"></span>
+            {#if loadedItem?.songId && source === 'online'}<button onclick={() => navigate(`/edit/${code}/${loadedItem!.songId}`)}><PencilLine size={18} />Edit timing</button>{/if}
+            <button onclick={() => (showQueue = !showQueue)} aria-pressed={showQueue}><ListMusic size={18} />Queue ({queue.length})</button>
+            <button class="icon" onclick={toggleFullscreen} title="Fullscreen (F)" aria-label="Fullscreen"><Maximize size={18} /></button>
+            {#if canCast}<button class="icon" onclick={cast} title="Show on a TV / Chromecast" aria-label="Cast to a TV"><Cast size={18} /></button>{/if}
+            <button class="icon" onclick={() => (showAdminQr = !showAdminQr)} title="Control from your phone" aria-label="Control from your phone"><Smartphone size={18} /></button>
           </div>
         </footer>
       {/if}
@@ -405,43 +421,49 @@
           <h3>Host controls on your phone</h3>
           <p class="hint">Only scan this yourself: it gives full control of the room.</p>
           <Qr text={`${location.origin}/join/${code}#admin=${encodeURIComponent(admin)}`} size={220} />
-          <button onclick={() => (showAdminQr = false)}>Close</button>
+          <button onclick={() => (showAdminQr = false)} style="margin-top:1rem">Close</button>
         </div>
       {/if}
     </div>
 
     {#if showQueue}
       <aside class="side">
-        <h3>Queue</h3>
+        <h3><ListMusic size={20} />Queue <span class="spacer"></span>
+          <button class="icon small ghost" aria-label="Hide the queue" onclick={() => (showQueue = false)}><X size={18} /></button></h3>
         <QueueList items={queue} admin
           onmove={(id, to) => conn?.send({ type: 'queue.move', itemId: id, to })}
           onremove={(id) => conn?.send({ type: 'queue.remove', itemId: id })}
           onplaynext={(id) => conn?.send({ type: 'queue.playNext', itemId: id })} />
         {#if queue.some((q) => q.status === 'processing') && !conn?.state?.workersOnline}
-          <p class="hint warn">Requests are waiting to be made: turn on “Make requests here”, open
+          <p class="hint warn">Requests are waiting to be made: turn on “Make requests on this device”, open
             <b>Make a song → Help at a party</b> on another laptop, or run <code>jojo worker --room {code}</code>.</p>
         {/if}
-        <label class="row"><input type="checkbox" checked={makingHere} onchange={toggleMakingHere} /> Make requests on this device</label>
-        {#if makingJob}<p class="hint">Making {makingJob}</p>{/if}
-        {#if store.workerKey(code)}
-          <details>
-            <summary>Let another computer make requests</summary>
-            <p class="hint">On a laptop: open this link (Chrome), or with the CLI:</p>
-            <code class="cmd">{location.origin}/make?room={code}#key={store.workerKey(code)}</code>
-            <code class="cmd">jojo worker --server {location.origin} --room {code} --key {store.workerKey(code)}</code>
-          </details>
-        {/if}
-        <details>
-          <summary>Room settings</summary>
+        <div class="box">
+          <label class="row"><input type="checkbox" checked={makingHere} onchange={toggleMakingHere} /> Make requests on this device</label>
+          {#if makingJob}<p class="hint">Making {makingJob}</p>{/if}
+          {#if store.workerKey(code)}
+            <details>
+              <summary>Let another computer make requests</summary>
+              <p class="hint">On a laptop: open this link (Chrome), or with the CLI:</p>
+              <code class="cmd">{location.origin}/make?room={code}#key={store.workerKey(code)}</code>
+              <code class="cmd">jojo worker --server {location.origin} --room {code} --key {store.workerKey(code)}</code>
+            </details>
+          {/if}
+        </div>
+        <details class="box">
+          <summary><Settings2 size={16} />Room settings</summary>
           <label class="row"><input type="checkbox" checked={conn?.state?.settings.fair}
             onchange={(e) => conn?.send({ type: 'settings', settings: { fair: (e.target as HTMLInputElement).checked } })} /> Fair rotation</label>
-          <label class="row">Max songs per person <input type="number" min="0" max="50" style="width:4em"
+          <label class="row" style="margin-top:.5rem">Max songs per person <input type="number" min="0" max="50" style="width:4.5em"
             value={conn?.state?.settings.maxPerPerson}
             onchange={(e) => conn?.send({ type: 'settings', settings: { maxPerPerson: +(e.target as HTMLInputElement).value } })} /></label>
           <h4>People</h4>
           <ul class="plain">
             {#each conn?.state?.members.filter((m) => m.role === 'guest') ?? [] as m (m.id)}
-              <li class:muted={!m.online}>{m.nickname} <button class="link danger" onclick={() => confirm(`Remove ${m.nickname}?`) && conn?.send({ type: 'kick', memberId: m.id })}>remove</button></li>
+              <li class:muted={!m.online}>{m.nickname}<span class="spacer"></span>
+                <button class="small icon ghost danger" aria-label="Remove {m.nickname}" onclick={() => confirm(`Remove ${m.nickname}?`) && conn?.send({ type: 'kick', memberId: m.id })}><X size={16} /></button></li>
+            {:else}
+              <li class="muted">No guests yet.</li>
             {/each}
           </ul>
         </details>
