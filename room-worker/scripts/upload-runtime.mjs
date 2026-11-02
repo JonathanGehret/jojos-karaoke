@@ -9,6 +9,9 @@ const require = createRequire(import.meta.url);
 // the package doesn't export package.json; find it from the main entry (…/onnxruntime-web/dist/…)
 const entry = require.resolve('onnxruntime-web', { paths: [join(import.meta.dirname, '..', '..', 'player')] });
 const dist = dirname(entry);
+// run wrangler through node: spawning `npx` directly fails on Windows (it's a .cmd)
+const wranglerPkg = require.resolve('wrangler/package.json', { paths: [join(import.meta.dirname, '..')] });
+const wrangler = join(dirname(wranglerPkg), JSON.parse(readFileSync(wranglerPkg, 'utf8')).bin.wrangler);
 const version = JSON.parse(readFileSync(join(dist, '..', 'package.json'), 'utf8')).version;
 const files = readdirSync(dist).filter((f) => /^ort-wasm-simd-threaded(\.(jsep|asyncify|jspi))?\.(wasm|mjs)$/.test(f));
 const args = process.argv.slice(2);
@@ -26,7 +29,7 @@ const remote = !extra.includes('--local');
 for (const f of files) {
   const key = `jojos-karaoke-library/runtime/${version}/${f}`;
   console.log(`↑ ${key}`);
-  execFileSync('npx', ['wrangler', 'r2', 'object', 'put', key, '--file', join(dist, f),
+  execFileSync(process.execPath, [wrangler, 'r2', 'object', 'put', key, '--file', join(dist, f),
     '--content-type', f.endsWith('.wasm') ? 'application/wasm' : 'text/javascript', ...(remote ? ['--remote'] : []), ...extra],
   { stdio: ['ignore', 'ignore', 'inherit'], cwd: join(import.meta.dirname, '..') });
 }

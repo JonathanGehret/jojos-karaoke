@@ -30,7 +30,7 @@ class SeparatorUnavailable(RuntimeError):
 def available_backends() -> list[str]:
     out = []
     try:
-        import audio_separator  # noqa: F401
+        import audio_separator.separator  # noqa: F401  (submodule: catches missing transitive deps)
         out += ["roformer", "fast"]
     except ImportError:
         pass
@@ -77,12 +77,22 @@ def _passthrough(src: str, outdir: str) -> Stems:
 Backend = Callable[[str, str], Stems]
 
 
+def auto_backend(have: list[str], device: str) -> str:
+    """RoFormer on a GPU; the light MDX model on CPU. RoFormer on CPU took over 3 h for a
+    4.5 min song on an older 4-core machine; MDX takes minutes. --separator roformer still forces it."""
+    if device == "cpu" and "fast" in have:
+        return "fast"
+    if "roformer" in have:
+        return "roformer"
+    return "demucs" if "demucs" in have else ""
+
+
 def separate(src: str, outdir: str, backend: str = "auto", device: str = "cpu",
              model: str | None = None) -> Stems:
     os.makedirs(outdir, exist_ok=True)
     have = available_backends()
     if backend == "auto":
-        backend = "roformer" if "roformer" in have else ("demucs" if "demucs" in have else "")
+        backend = auto_backend(have, device)
         if not backend:
             raise SeparatorUnavailable(
                 "No vocal separation model installed. Run: uv tool install 'jojos-karaoke[ml]' "

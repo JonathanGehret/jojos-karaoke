@@ -253,6 +253,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to a legacy codepage that can't print ✓/✗ or the progress bar
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     a = build_parser().parse_args(argv)
     try:
         return a.fn(a)

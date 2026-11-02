@@ -15,12 +15,14 @@ dependencies = [
 # The AI models. Kept optional so the core installs anywhere in seconds.
 ml = [
   "audio-separator[cpu]>=0.30",
+  "audioread>=3",  # audio-separator imports it; librosa 1.0 no longer pulls it in
   "demucs>=4.0.1",
   "faster-whisper>=1.1",
   "ctc-forced-aligner>=0.3",
 ]
 gpu = [
   "audio-separator[gpu]>=0.30",
+  "audioread>=3",  # audio-separator imports it; librosa 1.0 no longer pulls it in
   "demucs>=4.0.1",
   "faster-whisper>=1.1",
   "ctc-forced-aligner>=0.3",
