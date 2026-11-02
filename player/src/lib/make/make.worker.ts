@@ -132,11 +132,78 @@ async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
   post({ id: m.id, type: 'transcribed', words, backend: asr.backend });
 }
 
+// ---- forced alignment (wav2vec2 CTC): where each word of known lyrics is sung
+let ctc: { model: string; m: any; vocab: Record<string, number>; backend: string } | null = null;
+const CTC_FRAME_MS = 20; // wav2vec2 emits one frame per 320 samples at 16 kHz
+const CHUNK_S = 30, CONTEXT_S = 1;
+
+async function doAlign(m: Extract<ToWorker, { type: 'align' }>) {
+  const tf = await import('@huggingface/transformers');
+  tf.env.allowLocalModels = false;
+  tf.env.remoteHost = `${self.location.origin}/api/hf/`;
+  (tf.env.backends.onnx as any).wasm.wasmPaths = RUNTIME;
+  if (ctc?.model !== m.model) {
+    // GPU only with half precision (189 MB); otherwise the 8-bit model on the CPU (95 MB):
+    // the full-precision GPU model would be a 378 MB download
+    const adapter = await (navigator as any).gpu?.requestAdapter().catch(() => null);
+    const f16 = !!adapter?.features?.has('shader-f16');
+    const files = new Map<string, number>();
+    let fromNetwork = false;
+    const model = await tf.AutoModelForCTC.from_pretrained(m.model, {
+      device: f16 ? 'webgpu' : 'wasm', dtype: f16 ? 'fp16' : 'q8',
+      progress_callback: (e: any) => {
+        if (e.status === 'download') fromNetwork = true;
+        if (e.status === 'progress' && e.file) {
+          files.set(e.file, e.progress ?? 0);
+          const avg = [...files.values()].reduce((a, b) => a + b, 0) / (files.size * 100);
+          post({ id: m.id, type: 'progress', stage: fromNetwork ? 'download' : 'load', frac: avg, detail: 'timing model' });
+        }
+      },
+    } as any);
+    const vocab = await (await fetch(`${tf.env.remoteHost}${m.model}/resolve/main/vocab.json`)).json();
+    ctc = { model: m.model, m: model, vocab, backend: f16 ? 'webgpu' : 'wasm' };
+  }
+  const { charIds, forcedAlign, logSoftmax } = await import('./ctc');
+  // zero mean, unit variance over the whole track (the model's feature extractor does this)
+  const x = m.audio;
+  let mean = 0;
+  for (let i = 0; i < x.length; i++) mean += x[i];
+  mean /= x.length || 1;
+  let v = 0;
+  for (let i = 0; i < x.length; i++) v += (x[i] - mean) ** 2;
+  const sd = Math.sqrt(v / (x.length || 1) + 1e-7);
+  // run the model in chunks with a little context on both sides, keep the middle frames
+  const sr = 16000, step = CHUNK_S * sr, ctxS = CONTEXT_S * sr;
+  const totalFrames = Math.floor(x.length / 320);
+  const V = Object.keys(ctc.vocab).length;
+  const logits = new Float32Array(totalFrames * V);
+  for (let a = 0; a < x.length; a += step) {
+    const from = Math.max(0, a - ctxS), to = Math.min(x.length, a + step + ctxS);
+    const seg = new Float32Array(to - from);
+    for (let i = 0; i < seg.length; i++) seg[i] = (x[from + i] - mean) / sd;
+    const out = await ctc.m({ input_values: new tf.Tensor('float32', seg, [1, seg.length]) });
+    const lg = out.logits; // [1, frames, V]
+    const data = lg.data as Float32Array;
+    const n = lg.dims[1];
+    const skip = Math.round((a - from) / 320);
+    const keep = Math.min(Math.round(step / 320), totalFrames - Math.round(a / 320), n - skip);
+    const dst = Math.round(a / 320);
+    for (let f = 0; f < keep; f++) logits.set(data.subarray((skip + f) * V, (skip + f + 1) * V), (dst + f) * V);
+    lg.dispose?.();
+    post({ id: m.id, type: 'progress', stage: 'transcribe', frac: 0.1 + 0.8 * Math.min(1, (a + step) / x.length) });
+  }
+  logSoftmax(logits, totalFrames, V);
+  const words = forcedAlign(logits, totalFrames, V, m.tokens.map((t) => charIds(t, ctc!.vocab)), ctc.vocab['<pad>'] ?? 0, ctc.vocab['|'] ?? -1)
+    .map((w) => w && { start: w.start * CTC_FRAME_MS, end: w.end * CTC_FRAME_MS, score: w.score });
+  post({ id: m.id, type: 'aligned', words, backend: ctc.backend });
+}
+
 self.onmessage = async (e: MessageEvent<ToWorker>) => {
   const m = e.data;
   try {
     if (m.type === 'separate') await doSeparate(m);
     else if (m.type === 'transcribe') await doTranscribe(m);
+    else if (m.type === 'align') await doAlign(m);
   } catch (err) {
     post({ id: m.id, type: 'error', message: (err as Error)?.message ?? String(err) });
   }

@@ -2,7 +2,7 @@
 
 import type { Lyrics } from '$shared/lyrics';
 import { api } from '../api';
-import { assemble, fromLrcTimings, fromVoiceActivity, splitIntoLines, voicedRegions, type TimedWord } from './align';
+import { assemble, fromLrcTimings, fromVoiceActivity, splitIntoLines, tokenize, voicedRegions, type TimedWord } from './align';
 import { decodeFile, encodeOpus, toMono16k } from './encode';
 import { type LyricLine, parseLrc, parseLyrics, parseText } from './lyricsInput';
 import { INST_HQ_3, type MdxConfig } from './mdx';
@@ -10,6 +10,16 @@ import type { FromWorker, ToWorker } from './protocol';
 
 export const SEPARATION_MODEL = { name: 'UVR-MDX-NET-Inst_HQ_3.onnx', sizeMb: 67, config: INST_HQ_3 };
 export const ASR_MODELS = { en: 'Xenova/whisper-tiny.en', multi: 'Xenova/whisper-small' };
+/** Forced alignment of known lyrics (English letters; other languages use speech recognition). */
+export const ALIGN_MODEL = 'Xenova/wav2vec2-base-960h';
+
+/** Can the English character model align these lyrics? (mostly Latin letters, English or unset) */
+export function alignable(lines: LyricLine[], language?: string): boolean {
+  if (language && language !== 'en') return false;
+  const toks = lines.flatMap((l) => tokenize(l.text));
+  const latin = toks.filter((t) => /[a-z]/i.test(t.normalize('NFKD'))).length;
+  return toks.length > 0 && latin / toks.length >= 0.8;
+}
 
 export interface MakeOptions {
   title: string;
@@ -24,6 +34,7 @@ export interface MakeOptions {
   modelUrl?: string;           // override the separation model (tests, experiments)
   modelConfig?: MdxConfig;
   asrModel?: string;
+  alignModel?: string;          // forced-alignment model (Hugging Face id)
   onProgress?: (stage: string, pct: number, detail?: string) => void;
   signal?: AbortSignal;
 }
@@ -169,7 +180,25 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   const vocalsMono16 = await toMono16k(...(voc ?? inst), sampleRate);
   let lyrics: Lyrics = { version: 1, lines: [] };
   let words: TimedWord[] | null = null;
-  if (o.asr !== false && (lines.length || source === 'none')) {
+  // known lyrics: forced alignment finds where each word is sung (much tighter than ASR timestamps)
+  if (o.asr !== false && lines.length && alignable(lines, o.language)) {
+    try {
+      const tokens = lines.flatMap((l) => tokenize(l.text));
+      const m = await makerWorker.call({ type: 'align', audio: vocalsMono16.slice(), model: o.alignModel ?? ALIGN_MODEL, tokens }, [],
+        (p) => p.type === 'progress' && prog(p.stage, p.frac, p.detail), o.signal);
+      if (m.type === 'aligned') {
+        const found = m.words.filter(Boolean).length;
+        if (found >= tokens.length * 0.5) {
+          words = m.words.flatMap((w, i) => (w ? [{ text: tokens[i], ...w }] : []));
+          backend = `${backend}; ctc:${m.backend}`;
+        } else warnings.push(`Word alignment placed only ${found} of ${tokens.length} words; trying speech recognition.`);
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e;
+      warnings.push(`Word alignment failed (${(e as Error).message}); trying speech recognition.`);
+    }
+  }
+  if (!words && o.asr !== false && (lines.length || source === 'none')) {
     try {
       const model = o.asrModel ?? (o.language && o.language !== 'en' ? ASR_MODELS.multi : ASR_MODELS.en);
       const m = await makerWorker.call({ type: 'transcribe', audio: vocalsMono16.slice(), model, language: o.language }, [],

@@ -17,7 +17,7 @@ const immutable = 'public, max-age=31536000, immutable';
 
 // Speech models for transformers.js, proxied from Hugging Face and cached in R2: fetching them
 // straight from huggingface.co in the browser failed with CORS errors when HF had a bad moment.
-export const HF_REPOS = new Set(['Xenova/whisper-tiny.en', 'Xenova/whisper-small']);
+export const HF_REPOS = new Set(['Xenova/whisper-tiny.en', 'Xenova/whisper-small', 'Xenova/wav2vec2-base-960h']);
 const HF_FILE = /^(onnx\/)?[\w.-]{1,100}\.(json|onnx|txt|model)$/;
 
 export async function serveRuntime(env: Env, version: string, file: string, head = false): Promise<Response> {
