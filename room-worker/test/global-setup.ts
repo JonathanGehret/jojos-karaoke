@@ -1,5 +1,5 @@
 // Runs the real Worker under `wrangler dev` (local workerd, local R2/DO storage).
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -22,7 +22,7 @@ export async function setup({ provide }: { provide: (k: string, v: string) => vo
   const persist = mkdtempSync(join(tmpdir(), 'jojo-wrangler-'));
   proc = spawn(process.execPath, [wrangler, 'dev', '--port', port, '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:test-secret',
     '--persist-to', persist, '--show-interactive-dev-session=false'], {
-    cwd: join(here, '..'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+    cwd: join(here, '..'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true,
   });
   let log = '';
   proc.stdout!.on('data', (d) => (log += d));
@@ -41,5 +41,9 @@ export async function setup({ provide }: { provide: (k: string, v: string) => vo
 }
 
 export async function teardown() {
-  if (proc?.pid) { try { process.kill(-proc.pid, 'SIGTERM'); } catch { /* already gone */ } }
+  if (proc?.pid) {
+    // the dev server and its children: a process group on POSIX, taskkill /T on Windows
+    if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ } }
+    else { try { process.kill(-proc.pid, 'SIGTERM'); } catch { /* already gone */ } }
+  }
 }

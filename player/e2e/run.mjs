@@ -30,11 +30,17 @@ const port = 8900 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
 const wr = spawn(process.execPath, [wrangler, 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
   '--persist-to', join(tmp, 'state'), '--show-interactive-dev-session=false'],
-  { cwd: join(here, '..', '..', 'room-worker'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  { cwd: join(here, '..', '..', 'room-worker'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
 wr.stdout.on('data', (d) => (log += d));
 wr.stderr.on('data', (d) => (log += d));
 
+// stop the dev server and its children: a process group on POSIX, taskkill /T on Windows
+function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ } }
+  else { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? '✓' : '✗'} ${msg}`); if (!ok) failures++; };
@@ -78,7 +84,7 @@ try {
   screen.on('pageerror', (e) => errors.push(`screen: ${e.message}`));
   await screen.goto(`${base}/screen/${code}`);
   await screen.getByRole('button', { name: /Start the party/ }).click();
-  await screen.getByText('Pick a song!').waitFor({ timeout: 10000 });
+  await screen.getByRole('heading', { name: 'Pick a song!' }).waitFor({ timeout: 10000 });
   check(true, 'screen started and waits for songs');
 
   // guest phone
@@ -150,7 +156,7 @@ try {
   const maker = join(here, '..', '..', 'maker');
   let workerLog = '';
   const worker = spawn('uv', ['run', '-q', '--project', maker, 'jojo', 'worker', '--room', code, '--separator', 'none', '--once'],
-    { env: { ...process.env, JOJO_SERVER: base, JOJO_TOKEN: token }, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: { ...process.env, JOJO_SERVER: base, JOJO_TOKEN: token }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   worker.stdout.on('data', (d) => (workerLog += d));
   worker.stderr.on('data', (d) => (workerLog += d));
   const exit = await new Promise((r) => { worker.on('exit', r); setTimeout(() => { worker.kill(); r('timeout'); }, 90000); });
@@ -175,7 +181,7 @@ try {
   failures++;
 } finally {
   await browser?.close();
-  try { process.kill(-wr.pid, 'SIGTERM'); } catch { /* gone */ }
+  killTree(wr.pid);
 }
 console.log(failures ? `\n${failures} check(s) failed` : '\nall e2e checks passed');
 process.exit(failures ? 1 : 0);

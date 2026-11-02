@@ -43,11 +43,17 @@ const port = 9000 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
 const wr = spawn(process.execPath, [wrangler, 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
   '--persist-to', state, '--show-interactive-dev-session=false'],
-{ cwd: workerDir, env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+{ cwd: workerDir, env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
 wr.stdout.on('data', (d) => (log += d));
 wr.stderr.on('data', (d) => (log += d));
 
+// stop the dev server and its children: a process group on POSIX, taskkill /T on Windows
+function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ } }
+  else { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? '✓' : '✗'} ${msg}`); if (!ok) failures++; };
@@ -167,9 +173,9 @@ try {
   }));
   check(hostHas.includes('Requested'), `screen device now has: ${hostHas.join(', ')}`);
 
-  // the lyrics lookup proxy needs a library token and fails soft without internet
-  check((await fetch(`${base}/api/lyrics?title=x`)).status === 401, 'lyrics lookup requires a token');
-  const ly = await api('/api/lyrics?title=Nothing&artist=Nobody&duration=10', { token });
+  // the lyrics lookup proxy works without an account (device-first) and fails soft without internet
+  check((await fetch(`${base}/api/lyrics?title=x`)).status === 200, 'lyrics lookup works without a token');
+  const ly = await api('/api/lyrics?title=Nothing&artist=Nobody&duration=10');
   check('synced' in ly && 'plain' in ly, 'lyrics lookup answers even when LRCLIB is unreachable');
 
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
@@ -180,7 +186,7 @@ try {
   failures++;
 } finally {
   await browser?.close();
-  try { process.kill(-wr.pid, 'SIGTERM'); } catch { /* gone */ }
+  killTree(wr.pid);
   rmSync(join(dist, 'test-models'), { recursive: true, force: true });
 }
 console.log(failures ? `\n${failures} check(s) failed` : '\nall browser-maker checks passed');
