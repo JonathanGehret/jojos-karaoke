@@ -11,6 +11,7 @@ export interface Env {
   /** Workers rate limiting bindings (optional: missing in tests means "no limit") */
   CREATE_LIMIT?: RateLimit;
   UPLOAD_LIMIT?: RateLimit;
+  LOOKUP_LIMIT?: RateLimit;
 }
 
 /** Per-client limit for abuse-prone calls on a public site. */

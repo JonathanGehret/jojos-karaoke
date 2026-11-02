@@ -1,7 +1,7 @@
 // HTTP entry: library API, room routing, signed media. Everything else is the PWA (assets).
 
 import { summarize, type Principal } from './accounts';
-import { lookupLyrics, serveModel, serveRuntime } from './assets';
+import { lookupLyrics, serveHf, serveModel, serveRuntime } from './assets';
 import { serveMedia } from './media';
 import {
   Env, FILE_TYPES, accountsOf, limit, HttpError, MAX_FILE_BYTES, ROOM_CODE_RE, SONG_ID_RE, bearer, json, libKey, roomCode,
@@ -136,8 +136,10 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
   // ---- browser maker assets
   if (p[1] === 'runtime' && p.length === 4 && (m === 'GET' || m === 'HEAD')) return serveRuntime(env, p[2], p[3], m === 'HEAD');
   if (p[1] === 'models' && p.length === 3 && m === 'GET') return serveModel(env, ctx, p[2]);
+  if (p[1] === 'hf' && m === 'GET') return serveHf(env, ctx, p.slice(2));
+  // no account needed (songs are device-first); rate limited per IP instead
   if (p[1] === 'lyrics' && m === 'GET') {
-    await principal(req, env);
+    await limit(env.LOOKUP_LIMIT, req, 'lyrics');
     return lookupLyrics(url);
   }
 

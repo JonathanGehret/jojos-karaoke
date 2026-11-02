@@ -327,3 +327,18 @@ describe('rooms without an account (songs on the screen device)', () => {
     screen.close(); bea.close(); cid.close(); w.close();
   });
 });
+
+describe('browser maker assets', () => {
+  it('only proxies allow-listed Hugging Face files', async () => {
+    expect((await api('/api/hf/someone/else/resolve/main/config.json')).status).toBe(404);
+    expect((await api('/api/hf/Xenova/whisper-small/resolve/dev/config.json')).status).toBe(404);
+    expect((await api('/api/hf/Xenova/whisper-small/resolve/main/../../secret.json')).status).toBe(404);
+    expect((await api('/api/hf/Xenova/whisper-small/resolve/main/run.sh')).status).toBe(404);
+  });
+
+  it('looks lyrics up without an account', async () => {
+    const r = await api('/api/lyrics');
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ synced: null, plain: null });
+  });
+});

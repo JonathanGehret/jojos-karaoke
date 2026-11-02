@@ -73,6 +73,8 @@ let asr: { model: string; p: any; backend: string } | null = null;
 async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
   const tf = await import('@huggingface/transformers');
   tf.env.allowLocalModels = false;
+  // speech models come through our server (cached in R2), not straight from huggingface.co
+  tf.env.remoteHost = `${self.location.origin}/api/hf/`;
   (tf.env.backends.onnx as any).wasm.wasmPaths = RUNTIME;
   if (asr?.model !== m.model) {
     const gpu = await hasWebGpu();

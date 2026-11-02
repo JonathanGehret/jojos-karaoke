@@ -15,6 +15,11 @@ export const MODELS: Record<string, string> = {
 
 const immutable = 'public, max-age=31536000, immutable';
 
+// Speech models for transformers.js, proxied from Hugging Face and cached in R2: fetching them
+// straight from huggingface.co in the browser failed with CORS errors when HF had a bad moment.
+export const HF_REPOS = new Set(['Xenova/whisper-tiny.en', 'Xenova/whisper-small']);
+const HF_FILE = /^(onnx\/)?[\w.-]{1,100}\.(json|onnx|txt|model)$/;
+
 export async function serveRuntime(env: Env, version: string, file: string, head = false): Promise<Response> {
   if (!VERSION.test(version) || !RUNTIME_FILE.test(file)) throw new HttpError(404, 'not found');
   const key = `runtime/${version}/${file}`;
@@ -32,14 +37,37 @@ export async function serveRuntime(env: Env, version: string, file: string, head
 export async function serveModel(env: Env, ctx: ExecutionContext, name: string): Promise<Response> {
   const upstream = MODELS[name];
   if (!upstream) throw new HttpError(404, 'unknown model');
-  const key = `models/${name}`;
-  const headers = { 'content-type': 'application/octet-stream', 'cache-control': immutable };
+  return cached(env, ctx, `models/${name}`, upstream, 'application/octet-stream');
+}
+
+/** /api/hf/<org>/<repo>/resolve/main/<file>: an allow-listed Hugging Face file, cached in R2. */
+export async function serveHf(env: Env, ctx: ExecutionContext, parts: string[]): Promise<Response> {
+  const [org, repo, resolve, rev, ...rest] = parts;
+  const file = rest.join('/');
+  if (!HF_REPOS.has(`${org}/${repo}`) || resolve !== 'resolve' || rev !== 'main' || !HF_FILE.test(file)) {
+    throw new HttpError(404, 'not found');
+  }
+  const type = file.endsWith('.json') ? 'application/json' : 'application/octet-stream';
+  return cached(env, ctx, `models/hf/${org}/${repo}/${file}`, `https://huggingface.co/${org}/${repo}/resolve/main/${file}`, type);
+}
+
+async function cached(env: Env, ctx: ExecutionContext, key: string, upstream: string, type: string): Promise<Response> {
+  const headers = { 'content-type': type, 'cache-control': immutable };
   const obj = await env.LIBRARY.get(key);
   if (obj) return new Response(obj.body, { headers: { ...headers, 'content-length': String(obj.size) } });
 
-  const r = await fetch(upstream, { redirect: 'follow' });
+  let r = await fetch(upstream, { redirect: 'follow' });
+  if (r.status === 429 || r.status >= 500) r = await fetch(upstream, { redirect: 'follow' }); // one retry
+  // optional files (e.g. a missing tokenizer file) must stay a plain 404 so the library skips them
+  if (r.status === 404) return new Response('not found', { status: 404, headers: { 'cache-control': 'public, max-age=3600' } });
+  if (!r.ok || !r.body) throw new HttpError(502, `could not fetch the model (${r.status})`);
   const len = Number(r.headers.get('content-length'));
-  if (!r.ok || !r.body || !len) throw new HttpError(502, `could not fetch the model (${r.status})`);
+  if (!len) {
+    // small files may come compressed without a length: buffer them
+    const buf = await r.arrayBuffer();
+    ctx.waitUntil(env.LIBRARY.put(key, buf).catch((e) => console.error('model cache', e)));
+    return new Response(buf, { headers: { ...headers, 'content-length': String(buf.byteLength) } });
+  }
   const [toClient, toCache] = r.body.tee();
   const fixed = new FixedLengthStream(len);
   ctx.waitUntil(Promise.all([toCache.pipeTo(fixed.writable), env.LIBRARY.put(key, fixed.readable)]).catch((e) => console.error('model cache', e)));
@@ -55,7 +83,11 @@ export async function lookupLyrics(url: URL): Promise<Response> {
   if (!title) return none();
   const ua = { 'user-agent': 'jojos-karaoke (https://github.com/JonathanGehret/jojos-karaoke)' };
   const get = async (path: string): Promise<any> => {
-    const r = await fetch(`https://lrclib.net/api/${path}`, { headers: ua, signal: AbortSignal.timeout(8000) });
+    let r = await fetch(`https://lrclib.net/api/${path}`, { headers: ua, signal: AbortSignal.timeout(8000) });
+    if (r.status === 503 || r.status === 429) { // LRCLIB answers "server busy" at times
+      await new Promise((ok) => setTimeout(ok, 1500));
+      r = await fetch(`https://lrclib.net/api/${path}`, { headers: ua, signal: AbortSignal.timeout(8000) });
+    }
     return r.ok ? r.json() : r.status === 404 ? null : Promise.reject(new Error(String(r.status)));
   };
   try {

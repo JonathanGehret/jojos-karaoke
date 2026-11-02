@@ -19,7 +19,7 @@ export interface MakeOptions {
   separate?: boolean;          // default true
   asr?: boolean;               // use speech recognition for word timing (default true)
   lookup?: boolean;            // LRCLIB via the server (default true)
-  token?: string | null;       // library token (lyrics lookup)
+  token?: string | null;       // library token (optional; lookup works without one)
   duets?: boolean;
   modelUrl?: string;           // override the separation model (tests, experiments)
   modelConfig?: MdxConfig;
@@ -154,10 +154,10 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   if (o.lyricsText?.trim()) {
     lines = parseLyrics(o.lyricsText, o.duets);
     source = 'user';
-  } else if (o.lookup !== false && o.token && o.title) {
+  } else if (o.lookup !== false && o.title) {
     try {
       const q = new URLSearchParams({ title: o.title, artist: o.artist, duration: String(Math.round(durationMs / 1000)) });
-      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 12000 });
+      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 15000 });
       if (r.synced) { lines = parseLrc(r.synced); source = 'lrclib'; }
       else if (r.plain) { lines = parseText(r.plain); source = 'lrclib'; }
       else warnings.push('No lyrics found online.');

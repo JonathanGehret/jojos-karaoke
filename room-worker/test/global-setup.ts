@@ -1,11 +1,15 @@
 // Runs the real Worker under `wrangler dev` (local workerd, local R2/DO storage).
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// run wrangler through node: spawning `npx` directly fails on Windows (it's a .cmd)
+const wranglerPkg = createRequire(import.meta.url).resolve('wrangler/package.json');
+const wrangler = join(dirname(wranglerPkg), JSON.parse(readFileSync(wranglerPkg, 'utf8')).bin.wrangler);
 let proc: ChildProcess | undefined;
 
 export async function setup({ provide }: { provide: (k: string, v: string) => void }) {
@@ -16,7 +20,7 @@ export async function setup({ provide }: { provide: (k: string, v: string) => vo
   }
   const port = String(8790 + Math.floor(Math.random() * 100));
   const persist = mkdtempSync(join(tmpdir(), 'jojo-wrangler-'));
-  proc = spawn('npx', ['wrangler', 'dev', '--port', port, '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:test-secret',
+  proc = spawn(process.execPath, [wrangler, 'dev', '--port', port, '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:test-secret',
     '--persist-to', persist, '--show-interactive-dev-session=false'], {
     cwd: join(here, '..'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
