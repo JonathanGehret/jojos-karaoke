@@ -6,6 +6,7 @@
   import LyricsView from '../components/LyricsView.svelte';
   import { AudioEngine, decode, unlockAudio } from '../lib/audio/engine';
   import { bufferOf } from '../lib/jkp';
+  import { mmss } from '../lib/format';
   import { downloadBytes, exportJkp, fileName, saveSong } from '../lib/localLibrary';
   import { canEncodeOpus } from '../lib/make/encode';
   import { type MadeSong, SEPARATION_MODEL, guessFromFilename, makeSong, makerWorker, uploadSong } from '../lib/make/pipeline';
@@ -44,6 +45,9 @@
   const engine = new AudioEngine();
   let engineReady = false;
   let previewLyrics = $state<Lyrics | null>(null);
+  let pos = $state(0);
+  let dur = $state(0);
+  const posTimer = setInterval(() => { if (engineReady) pos = engine.positionMs(); }, 250);
   let playing = $state(false);
 
   // room helper
@@ -64,7 +68,7 @@
   }
 
   const STAGES: Record<string, string> = {
-    decode: 'Reading the file', download: 'Downloading the AI model (first time only)', separate: 'Removing vocals',
+    decode: 'Reading the file', download: 'Downloading the AI model (first time only)', load: 'Loading the AI model from this device', separate: 'Removing vocals',
     lyrics: 'Finding lyrics', transcribe: 'Timing the words', encode: 'Saving audio',
   };
 
@@ -81,7 +85,7 @@
         onProgress: (s, p, d) => {
           stage = s; pct = p; detail = d ?? '';
           const el = (performance.now() - t0) / 1000;
-          eta = p > 12 && s !== 'download' ? Math.round((el * (100 - p)) / p) : null;
+          eta = p > 12 && s !== 'download' && s !== 'load' ? Math.round((el * (100 - p)) / p) : null;
         },
       });
       await saveSong(result.manifest, result.lyrics, result.files);
@@ -105,6 +109,7 @@
     const inst = await decode(bufferOf(result.files['instrumental.opus']));
     const voc = result.files['vocals.opus'] ? await decode(bufferOf(result.files['vocals.opus'])) : null;
     engine.load(inst, voc);
+    dur = engine.durationMs; pos = 0;
     engine.onEnded = () => (playing = false);
     previewLyrics = result.lyrics;
   }
@@ -133,7 +138,7 @@
     runner.start();
   }
 
-  onDestroy(() => { runner?.stop(); engine.stop(); makerWorker.terminate(); });
+  onDestroy(() => { clearInterval(posTimer); runner?.stop(); engine.stop(); makerWorker.terminate(); });
 </script>
 
 <main class="page make">
@@ -189,6 +194,12 @@
       {#if saved}<p class="ok">✓ Saved on this device (My songs).</p>{/if}
       {#if uploaded}<p class="ok">✓ Added to your online library.</p>{/if}
       {#if previewLyrics}<LyricsView lyrics={previewLyrics} clock={() => engine.positionMs()} size="phone" />{/if}
+      <div class="row seek"><span>{mmss(pos)}</span>
+        <input type="range" min="0" max={dur || 1} value={pos} aria-label="Position"
+          oninput={(e) => { pos = +(e.target as HTMLInputElement).value; engine.seek(pos); }} />
+        <span>{mmss(dur)}</span>
+        <button onclick={() => engine.seek(Math.max(0, engine.positionMs() - 10000))} aria-label="Back 10 seconds">−10s</button>
+        <button onclick={() => engine.seek(engine.positionMs() + 10000)} aria-label="Forward 10 seconds">+10s</button></div>
       <div class="row">
         <button class="primary" onclick={toggle}>{playing ? '⏸' : '▶'} Preview</button>
         <label class="row">Guide vocal <input type="range" min="0" max="1" step="0.1" value="0"

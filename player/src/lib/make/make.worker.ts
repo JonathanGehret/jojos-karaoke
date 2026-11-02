@@ -20,8 +20,17 @@ async function hasWebGpu(): Promise<boolean> {
   try { return !!(await (navigator as any).gpu?.requestAdapter()); } catch { return false; }
 }
 
-/** Download with progress (the browser's HTTP cache keeps it for next time). */
+const MODEL_CACHE = 'jojo-models-v1';
+
+/** The model from this device's cache if it's there, otherwise downloaded with progress and
+ *  kept (Cache Storage, not the HTTP cache, so we know whether it's already here). */
 async function download(url: string, id: number): Promise<Uint8Array> {
+  const cache = await caches.open(MODEL_CACHE).catch(() => null);
+  const hit = await cache?.match(url).catch(() => undefined);
+  if (hit) {
+    post({ id, type: 'progress', stage: 'load', frac: 0.5 });
+    return new Uint8Array(await hit.arrayBuffer());
+  }
   const r = await fetch(url);
   if (!r.ok || !r.body) throw new Error(`could not download the model (${r.status})`);
   const total = Number(r.headers.get('content-length')) || 0;
@@ -41,6 +50,8 @@ async function download(url: string, id: number): Promise<Uint8Array> {
   const out = new Uint8Array(got);
   let o = 0;
   for (const p of parts) { out.set(p, o); o += p.length; }
+  // storage full or private mode: still works, just downloads again next time
+  await cache?.put(url, new Response(out.slice(), { headers: { 'content-type': 'application/octet-stream' } })).catch(() => {});
   return out;
 }
 
@@ -79,14 +90,16 @@ async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
   if (asr?.model !== m.model) {
     const gpu = await hasWebGpu();
     const files = new Map<string, number>();
+    let fromNetwork = false; // transformers.js reports 'download' only for files not in its cache
     const p = await tf.pipeline('automatic-speech-recognition', m.model, {
       device: gpu ? 'webgpu' : 'wasm',
       dtype: gpu ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } as any : 'q8',
       progress_callback: (e: any) => {
+        if (e.status === 'download') fromNetwork = true;
         if (e.status === 'progress' && e.file) {
           files.set(e.file, e.progress ?? 0);
           const avg = [...files.values()].reduce((a, b) => a + b, 0) / (files.size * 100);
-          post({ id: m.id, type: 'progress', stage: 'download', frac: avg, detail: 'speech model' });
+          post({ id: m.id, type: 'progress', stage: fromNetwork ? 'download' : 'load', frac: avg, detail: 'speech model' });
         }
       },
     });

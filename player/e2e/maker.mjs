@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
+// run wrangler through node: spawning `npx` directly fails on Windows (it's a .cmd)
+const wranglerPkg = createRequire(import.meta.url).resolve('wrangler/package.json', { paths: [join(here, '..', '..', 'room-worker')] });
+const wrangler = join(dirname(wranglerPkg), JSON.parse(readFileSync(wranglerPkg, 'utf8')).bin.wrangler);
 const strict = process.env.JOJO_E2E_STRICT === '1';
 const realModel = process.env.JOJO_E2E_REAL_MODEL === '1';
 let chromium;
@@ -34,11 +37,11 @@ const req = join(tmp, 'Nobody - Requested.wav');
 execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=262:duration=6', '-ac', '2', req]);
 
 console.log('uploading ONNX Runtime to local R2…');
-execFileSync('node', ['scripts/upload-runtime.mjs', '--local', '--persist-to', state], { cwd: workerDir, stdio: 'inherit' });
+execFileSync(process.execPath, ['scripts/upload-runtime.mjs', '--local', '--persist-to', state], { cwd: workerDir, stdio: 'inherit' });
 
 const port = 9000 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
-const wr = spawn('npx', ['wrangler', 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
+const wr = spawn(process.execPath, [wrangler, 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
   '--persist-to', state, '--show-interactive-dev-session=false'],
 { cwd: workerDir, env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';

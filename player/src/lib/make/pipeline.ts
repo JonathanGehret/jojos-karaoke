@@ -37,7 +37,7 @@ export interface MadeSong {
 }
 
 const WEIGHTS: Record<string, [number, number]> = {
-  decode: [0, 3], download: [3, 10], separate: [10, 70], lyrics: [70, 72], transcribe: [72, 90], encode: [90, 100],
+  decode: [0, 3], download: [3, 10], load: [3, 10], separate: [10, 70], lyrics: [70, 72], transcribe: [72, 90], encode: [90, 100],
 };
 
 type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;

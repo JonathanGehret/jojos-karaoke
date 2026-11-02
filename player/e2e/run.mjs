@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
+// run wrangler through node: spawning `npx` directly fails on Windows (it's a .cmd)
+const wranglerPkg = createRequire(import.meta.url).resolve('wrangler/package.json', { paths: [join(here, '..', '..', 'room-worker')] });
+const wrangler = join(dirname(wranglerPkg), JSON.parse(readFileSync(wranglerPkg, 'utf8')).bin.wrangler);
 const strict = process.env.JOJO_E2E_STRICT === '1';
 
 let chromium;
@@ -25,7 +28,7 @@ execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequenc
 
 const port = 8900 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
-const wr = spawn('npx', ['wrangler', 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
+const wr = spawn(process.execPath, [wrangler, 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', 'MEDIA_SECRET:e2e',
   '--persist-to', join(tmp, 'state'), '--show-interactive-dev-session=false'],
   { cwd: join(here, '..', '..', 'room-worker'), env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
