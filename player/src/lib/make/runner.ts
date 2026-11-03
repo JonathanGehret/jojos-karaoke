@@ -15,6 +15,7 @@ export class BrowserJobRunner {
   private stopped = false;
   private timer = 0;
   private retry = 0;
+  private lastClaim = 0;
 
   constructor(private code: string, private token: string, private ev: RunnerEvents = {},
     private opts: { modelUrl?: string; asr?: boolean } = {}) {}
@@ -31,6 +32,14 @@ export class BrowserJobRunner {
     this.ev.onStatus?.('stopped');
   }
 
+  /** Ask for work. The answer to an empty claim is `job: null`, which is also the server's
+   *  "work is waiting" nudge: never answer it right away, or the two ping-pong without end. */
+  private claim() {
+    if (this.busy || Date.now() - this.lastClaim < 2000) return;
+    this.lastClaim = Date.now();
+    this.send({ type: 'job.claim' });
+  }
+
   private send(m: unknown) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m));
   }
@@ -43,14 +52,15 @@ export class BrowserJobRunner {
     ws.onopen = () => {
       this.retry = 0;
       this.ev.onStatus?.('waiting for requests');
-      this.send({ type: 'job.claim' });
+      this.claim();
       clearInterval(this.timer);
-      this.timer = window.setInterval(() => !this.busy && this.send({ type: 'job.claim' }), 5000);
+      // the server nudges workers when a request comes in; this is only a fallback
+      this.timer = window.setInterval(() => this.claim(), 15000);
     };
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data) as ServerMsg;
       if (m.type === 'job' && m.job && !this.busy) this.run(m.job);
-      else if (m.type === 'job' && !m.job && !this.busy) this.send({ type: 'job.claim' });
+      else if (m.type === 'job' && !m.job) this.claim(); // a nudge (throttled; see claim())
     };
     ws.onclose = (e) => {
       clearInterval(this.timer);
@@ -90,7 +100,8 @@ export class BrowserJobRunner {
     } finally {
       this.busy = false;
       this.ev.onJob?.(null);
-      this.send({ type: 'job.claim' });
+      this.lastClaim = 0;
+      this.claim();
     }
   }
 }

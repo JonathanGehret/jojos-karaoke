@@ -86,7 +86,15 @@ export class RoomConnection {
       this.samples = [];
       this.burstPing();
       clearInterval(this.pingTimer);
-      this.pingTimer = window.setInterval(() => this.ping(), 10_000);
+      // clock sync: every 10 s for the first 2 minutes, then every 30 s; none while the tab is
+      // hidden (each ping wakes the room server, which is a daily-limited resource)
+      const openedAt = Date.now();
+      let lastPing = Date.now();
+      this.pingTimer = window.setInterval(() => {
+        if (document.hidden) return;
+        const every = Date.now() - openedAt < 120_000 ? 10_000 : 30_000;
+        if (Date.now() - lastPing >= every - 500) { lastPing = Date.now(); this.ping(); }
+      }, 5_000);
     };
     ws.onmessage = (e) => this.onMessage(JSON.parse(e.data));
     ws.onclose = (e) => {

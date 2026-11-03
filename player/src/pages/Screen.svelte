@@ -280,7 +280,8 @@
   // engine fields aren't reactive: copy them on a timer
   let dur = $state(0);
   const posTimer = setInterval(() => { pos = engine.positionMs(); dur = engine.durationMs; }, 250);
-  const pubTimer = setInterval(() => { if (playing) publish(); }, 5000);
+  // guests follow the clock between updates; changes (play, seek, …) are published right away
+  const pubTimer = setInterval(() => { if (playing) publish(); }, 10000);
 
   function wake() {
     showControls = true;

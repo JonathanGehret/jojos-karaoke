@@ -337,6 +337,19 @@ describe('rooms without an account (songs on the screen device)', () => {
 });
 
 describe('browser maker assets', () => {
+  it('does not answer a worker that re-claims right after "no job" (no ping-pong loop)', async () => {
+    const r = await api('/api/rooms', { method: 'POST', body: JSON.stringify({ name: 'Jo' }) });
+    const { code: c, workerKey } = r.body;
+    const w = new Client(ws(`/api/rooms/${c}/ws?role=worker&token=${workerKey}`));
+    await w.next('welcome');
+    w.send({ type: 'job.claim' });
+    expect((await w.next('job')).job).toBeNull();
+    for (let i = 0; i < 5; i++) w.send({ type: 'job.claim' });
+    await new Promise((ok) => setTimeout(ok, 500));
+    expect(w.inbox.filter((m) => m.type === 'job')).toHaveLength(0);
+    w.close();
+  });
+
   it('only proxies allow-listed Hugging Face files', async () => {
     expect((await api('/api/hf/someone/else/resolve/main/config.json')).status).toBe(404);
     expect((await api('/api/hf/Xenova/whisper-small/resolve/dev/config.json')).status).toBe(404);

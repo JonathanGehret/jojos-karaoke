@@ -48,6 +48,10 @@ const idlePlayback = (): Playback => ({
 export class Room extends DurableObject<Env> {
   s: Stored | null = null;
   library: SongSummary[] = [];
+  /** last empty job.claim answered per worker socket (in memory: lost on hibernation, that's fine) */
+  private emptyClaims = new WeakMap<WebSocket, number>();
+  private playbackSavedAt = 0;
+  private alarmSetAt = 0;
   libraryAt = 0;
   reactions = new Map<string, number[]>();
 
@@ -422,7 +426,10 @@ export class Room extends DurableObject<Env> {
           songId: s.nowPlaying?.songId ?? null,
         };
         this.broadcast({ type: 'playback', playback: s.playback }, (a) => a.memberId !== me.id);
-        await this.touch();
+        // sent every few seconds while a song plays: keep it in memory, store it now and then
+        // (storage writes are a daily-limited resource)
+        s.lastActive = Date.now();
+        if (Date.now() - this.playbackSavedAt > 30_000) { this.playbackSavedAt = Date.now(); await this.touch(); }
         return;
       }
 
@@ -483,6 +490,13 @@ export class Room extends DurableObject<Env> {
           job.workerId = me.id;
           job.claimedAt = now;
           this.setItem(job.queueItemId, { progress: { stage: 'starting', pct: 0 } });
+        }
+        if (!job) {
+          // a worker that claims again right after "no job" (old browser makers did, in a tight
+          // loop) gets no answer: it asks again on its normal timer
+          const last = this.emptyClaims.get(ws) ?? 0;
+          this.emptyClaims.set(ws, now);
+          if (now - last < 2000) return;
         }
         this.sendTo(ws, { type: 'job', job: job ?? null });
         if (!job) return;
@@ -672,7 +686,11 @@ export class Room extends DurableObject<Env> {
   private async touch() {
     this.s!.lastActive = Date.now();
     await this.save();
-    await this.ctx.storage.setAlarm(this.s!.lastActive + LIMITS.roomIdleMs);
+    // the idle alarm only needs to be roughly right (rooms close after hours): set it now and then
+    if (this.s!.lastActive - this.alarmSetAt > 10 * 60_000) {
+      this.alarmSetAt = this.s!.lastActive;
+      await this.ctx.storage.setAlarm(this.s!.lastActive + LIMITS.roomIdleMs);
+    }
   }
 
   private async save() {

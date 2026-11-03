@@ -18,7 +18,7 @@ Types: `shared/protocol.ts` (source of truth). Transport: JSON over one WebSocke
 - **Screen** owns playback and the songs on its device: it sends `screen.library` (summaries)
   and, for the song now playing, `lyrics` (already shifted by the song's offset), which the
   server relays to everyone (and replays to late joiners).
-- **Screen** owns playback. It sends `playback` on every change and every 5 s; guests compute
+- **Screen** owns playback. It sends `playback` on every change and every 10 s while playing; guests compute
   the position with `positionAt(playback, serverNow)`, where `serverNow` comes from
   NTP-style `ping`/`pong` (median of the fastest half of the last 30 samples).
 - Host commands from a remote (`control`, `control.set`) are relayed to screens, which apply
