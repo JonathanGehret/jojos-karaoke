@@ -129,6 +129,8 @@ try {
   await page.getByRole('button', { name: /Host a party/ }).click();
   await page.waitForURL(/\/screen\/[A-Z0-9]{4}$/);
   const code = page.url().split('/').pop();
+  // requests here are made by another maker (that's what this test checks), not by the screen itself
+  await page.evaluate(() => localStorage.setItem('jk.makeHere', 'false'));
   await page.getByRole('button', { name: /Start the party/ }).click();
   check(true, `party ${code} started without an account`);
 

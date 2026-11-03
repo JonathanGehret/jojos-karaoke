@@ -23,11 +23,17 @@ Types: `shared/protocol.ts` (source of truth). Transport: JSON over one WebSocke
   NTP-style `ping`/`pong` (median of the fastest half of the last 30 samples).
 - Host commands from a remote (`control`, `control.set`) are relayed to screens, which apply
   them and publish the new playback.
+- **Playing a request while it is made.** When the screen device is also the maker of a request,
+  it may start the song before it is finished (it has the audio that is already separated). It
+  sends `queue.playable { itemId }` once it is sure making stays ahead of playback; the server
+  sets `playable: true` on that `processing` item, and `advance` takes the first item that is
+  `ready` or `playable`. The item stays `processing` until `job.done` (also while it is
+  `nowPlaying`); the screen then sends the final `lyrics` again.
 
 ## Messages
 
 Client → server: `ping`, `queue.add`, `queue.remove`, `queue.move`*, `queue.playNext`*,
-`request.add`, `control`*, `control.set`*, `playback`†, `advance`†, `settings`*, `kick`*,
+`request.add`, `control`*, `control.set`*, `playback`†, `advance`†, `queue.playable`†, `settings`*, `kick`*,
 `react`, `job.claim`‡, `job.progress`‡, `job.done`‡,
 `job.failed`‡.  (* host, † screen, ‡ worker)
 

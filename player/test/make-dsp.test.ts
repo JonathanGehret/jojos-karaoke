@@ -114,6 +114,16 @@ describe('mdx separation', () => {
     expect(seen.at(-1)).toBe(1);
     expect(seen).toEqual([...seen].sort((a, b) => a - b));
   });
+
+  it('hands out final parts while it runs (for playing a song before it is done)', async () => {
+    const lo = async (s: Float32Array) => s.map((v, i) => v * (i % 3 ? 0.5 : 1));
+    const snaps: { done: number; inst: Float32Array }[] = [];
+    const res = await separate(mix, mix, lo, SMALL, undefined, 0.25, (done, out) => snaps.push({ done, inst: out.instL.slice(0, done) }));
+    expect(snaps.length).toBeGreaterThan(1);
+    expect(snaps.map((s) => s.done)).toEqual([...snaps.map((s) => s.done)].sort((a, b) => a - b));
+    expect(snaps.at(-1)!.done).toBe(mix.length);
+    for (const s of snaps) expect(s.inst).toEqual(res.instL.slice(0, s.done));
+  });
 });
 
 describe('ogg opus muxer', () => {

@@ -2,11 +2,16 @@
 
 import type { Job, ServerMsg } from '$shared/protocol';
 import { exportJkp } from '../localLibrary';
-import { makeSong } from './pipeline';
+import { type EarlySong, type MadeSong, makeSong } from './pipeline';
 
 export interface RunnerEvents {
   onStatus?: (s: string) => void;
   onJob?: (job: Job | null, pct?: number, stage?: string) => void;
+  /** audio of the request while it is being made (only the screen asks for this, to play early) */
+  onEarly?: (job: Job, early: EarlySong) => void;
+  /** the request is made (before it is handed to the room) */
+  onMade?: (job: Job, song: MadeSong) => void;
+  onFailed?: (job: Job, message: string) => void;
 }
 
 export class BrowserJobRunner {
@@ -81,11 +86,13 @@ export class BrowserJobRunner {
       const blob = await r.blob();
       const song = await makeSong(blob, {
         title: job.title, artist: job.artist, lyricsText: job.lyrics, token: this.token, ...this.opts,
+        onEarly: this.ev.onEarly ? (e) => this.ev.onEarly?.(job, e) : undefined,
         onProgress: (stage, pct) => {
           this.ev.onJob?.(job, pct, stage);
           if (Date.now() - last > 1000) { last = Date.now(); this.send({ type: 'job.progress', jobId: job.id, stage, pct }); }
         },
       });
+      try { this.ev.onMade?.(job, song); } catch { /* the screen's early playback must not stop the request */ }
       // the finished package goes back to the room: the screen imports it into its device
       // library, and the guest who brought the song can download it
       const pkg = await exportJkp({ id: song.manifest.id, manifest: song.manifest, lyrics: song.lyrics, addedAt: 0, size: 0,
@@ -96,7 +103,9 @@ export class BrowserJobRunner {
       if (!up.ok) throw new Error(`could not hand the song to the room (${up.status})`);
       this.send({ type: 'job.done', jobId: job.id, songId: song.manifest.id });
     } catch (e) {
-      this.send({ type: 'job.failed', jobId: job.id, error: String((e as Error).message ?? e).slice(0, 200) });
+      const msg = String((e as Error).message ?? e).slice(0, 200);
+      this.send({ type: 'job.failed', jobId: job.id, error: msg });
+      try { this.ev.onFailed?.(job, msg); } catch { /* ignore */ }
     } finally {
       this.busy = false;
       this.ev.onJob?.(null);

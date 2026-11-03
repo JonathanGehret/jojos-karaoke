@@ -311,6 +311,17 @@ describe('rooms without an account (songs on the screen device)', () => {
     expect((await api(`/api/rooms/${c}/uploads/${job.uploadId}`, { token: workerKey })).status).toBe(200);
     expect((await api(`/api/rooms/${c}/uploads/${job.uploadId}`, { token: beaTok })).status).toBe(403);
 
+    // a processing request is skipped by advance until the screen says it can play it early
+    bea.send({ type: 'queue.playable', itemId: reqItem.id });
+    expect((await bea.next('error')).message).toBe('screen only');
+    screen.send({ type: 'advance' });
+    expect((await screen.state((s) => s.nowPlaying === null)).queue.some((q: any) => q.id === reqItem.id)).toBe(true);
+    screen.send({ type: 'queue.playable', itemId: reqItem.id });
+    await screen.state((s) => s.queue.find((q: any) => q.id === reqItem.id)?.playable === true);
+    screen.send({ type: 'advance' });
+    const early = await screen.state((s) => s.nowPlaying?.id === reqItem.id);
+    expect(early.nowPlaying).toMatchObject({ status: 'processing', playable: true, songId: null });
+
     // job.done without a result is refused
     w.send({ type: 'job.done', jobId: job.id, songId: 'nobody-brought-along-bbbbbb' });
     expect((await w.next('error')).message).toMatch(/not uploaded/);
@@ -318,8 +329,9 @@ describe('rooms without an account (songs on the screen device)', () => {
     expect((await api(`/api/rooms/${c}/results/${job.id}`, { method: 'POST', body: pkg, token: beaTok })).status).toBe(403);
     expect((await api(`/api/rooms/${c}/results/${job.id}`, { method: 'POST', body: pkg, token: workerKey })).status).toBe(200);
     w.send({ type: 'job.done', jobId: job.id, songId: 'nobody-brought-along-bbbbbb' });
-    const done = await screen.state((s) => s.queue.find((q: any) => q.id === reqItem.id)?.status === 'ready');
-    expect(done.queue.find((q: any) => q.id === reqItem.id)).toMatchObject({ songId: 'nobody-brought-along-bbbbbb', hasResult: true });
+    // finishing while it plays updates the playing item
+    const done = await screen.state((s) => s.nowPlaying?.id === reqItem.id && s.nowPlaying.status === 'ready');
+    expect(done.nowPlaying).toMatchObject({ songId: 'nobody-brought-along-bbbbbb', hasResult: true });
 
     // the requester and the host can download the package; others can't
     const mine = await api(`/api/rooms/${c}/results/${reqItem.id}?member=${beaTok}`);

@@ -30,6 +30,8 @@ export interface QueueItem {
   error?: string;
   /** a request's finished package is waiting in the room (screen imports it; the requester can download it) */
   hasResult?: boolean;
+  /** a processing request the screen can already play (it is making it and stays ahead) */
+  playable?: boolean;
 }
 
 export interface Job {
@@ -70,6 +72,7 @@ export type ClientMsg =
   | { type: 'queue.remove'; itemId: string }
   | { type: 'queue.move'; itemId: string; to: number }            // admin
   | { type: 'queue.playNext'; itemId: string }                    // admin
+  | { type: 'queue.playable'; itemId: string }                    // screen
   | { type: 'request.add'; title: string; artist: string; uploadId: string; lyrics?: string }
   | { type: 'control'; action: 'play' | 'pause' | 'skip' | 'restart' | 'seek'; positionMs?: number } // admin → screen
   | { type: 'control.set'; key?: number; vocal?: number; rate?: number }                          // admin → screen

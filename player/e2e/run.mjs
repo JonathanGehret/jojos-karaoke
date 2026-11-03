@@ -83,6 +83,8 @@ try {
   const errors = [];
   screen.on('pageerror', (e) => errors.push(`screen: ${e.message}`));
   await screen.goto(`${base}/screen/${code}`);
+  // requests here are made by another maker (that's what this test checks), not by the screen itself
+  await screen.evaluate(() => localStorage.setItem('jk.makeHere', 'false'));
   await screen.getByRole('button', { name: /Start the party/ }).click();
   await screen.getByRole('heading', { name: 'Pick a song!' }).waitFor({ timeout: 10000 });
   check(true, 'screen started and waits for songs');

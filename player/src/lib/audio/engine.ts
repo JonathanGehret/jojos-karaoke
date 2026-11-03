@@ -51,6 +51,13 @@ export class AudioEngine {
   private st: SoundTouchNode | null = null;
   private anchorCtx = 0;   // ctx time at which anchorPos was the position
   private anchorPos = 0;   // song position in ms
+  // exact position inside the buffers (for swapping in a longer buffer without a gap)
+  private srcAnchorCtx = 0;    // ctx time …
+  private srcAnchorOffset = 0; // … at which the sources were this many seconds into the buffer
+  /** the buffers hold only the part of a song that is ready (it is still being made) */
+  partial = false;
+  /** a partial song ran out of audio (playback stopped at the end of what is ready) */
+  onStarved: (() => void) | null = null;
   playing = false;
   rate = 1;
   key = 0;
@@ -75,8 +82,9 @@ export class AudioEngine {
     this.master.connect(this.ctx.destination);
   }
 
-  load(inst: AudioBuffer, voc: AudioBuffer | null) {
+  load(inst: AudioBuffer, voc: AudioBuffer | null, partial = false) {
     this.stop();
+    this.partial = partial;
     this.inst = inst;
     this.voc = voc;
     this.anchorPos = 0;
@@ -111,19 +119,61 @@ export class AudioEngine {
     };
     this.srcI = mk(this.inst, this.gainI);
     if (this.voc) this.srcV = mk(this.voc, this.gainV);
-    const me = this.srcI;
-    this.srcI.onended = () => {
-      if (this.srcI === me && this.playing) {
-        this.playing = false;
-        this.anchorPos = this.durationMs;
-        this.onEnded?.();
-      }
-    };
+    this.watchEnd();
+    this.srcAnchorCtx = when;
+    this.srcAnchorOffset = offset;
     // anchor so that positionMs() == fromMs once the sound actually reaches the speakers
     this.anchorCtx = when;
     this.anchorPos = fromMs + this.latencyMs() * this.rate;
     this.playing = true;
     this.applyParams();
+  }
+
+  private watchEnd() {
+    const me = this.srcI;
+    if (!me) return;
+    me.onended = () => {
+      if (this.srcI === me && this.playing) {
+        this.playing = false;
+        this.anchorPos = this.durationMs;
+        if (this.partial) this.onStarved?.();
+        else this.onEnded?.();
+      }
+    };
+  }
+
+  /**
+   * Swap in longer buffers of the same song (it is still being made) without a gap: the new
+   * sources start at a scheduled moment exactly where the old ones are, and the old ones stop
+   * then. `partial` = still not the whole song.
+   */
+  extend(inst: AudioBuffer, voc: AudioBuffer | null, partial: boolean) {
+    this.partial = partial;
+    if (!this.playing || !this.srcI) { this.inst = inst; this.voc = voc; return; }
+    const when = this.ctx.currentTime + 0.25; // lead time: the page may be busy (the song is being made)
+    const offset = this.srcAnchorOffset + (when - this.srcAnchorCtx) * this.rate;
+    const old = [this.srcI, this.srcV];
+    if (offset >= (this.inst?.duration ?? 0) - 0.02) { this.inst = inst; this.voc = voc; return; } // about to run out: let it
+    this.inst = inst;
+    this.voc = voc;
+    for (const o of old) {
+      if (!o) continue;
+      o.onended = () => o.disconnect();
+      try { o.stop(when); } catch { /* already stopped */ }
+    }
+    const mk = (buf: AudioBuffer, dst: AudioNode) => {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = this.rate;
+      src.connect(dst);
+      src.start(when, offset);
+      return src;
+    };
+    this.srcI = mk(inst, this.gainI);
+    this.srcV = voc ? mk(voc, this.gainV) : null;
+    this.watchEnd();
+    this.srcAnchorCtx = when;
+    this.srcAnchorOffset = offset;
   }
 
   pause() {
@@ -150,6 +200,9 @@ export class AudioEngine {
       const pos = this.positionMs();
       this.anchorCtx = this.ctx.currentTime;
       this.anchorPos = pos + this.latencyMs() * rate;
+      const t = this.ctx.currentTime;
+      this.srcAnchorOffset += Math.max(0, t - this.srcAnchorCtx) * this.rate;
+      this.srcAnchorCtx = Math.max(t, this.srcAnchorCtx);
     }
     this.rate = rate;
     this.applyParams();

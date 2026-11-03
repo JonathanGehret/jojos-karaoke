@@ -64,7 +64,7 @@
         <span class="title">{it.title}{#if it.artist}<span class="artist"> · {it.artist}</span>{/if}</span>
         <span class="who">{it.nickname}
           {#if it.status === 'processing'}
-            <span class="badge proc"><LoaderCircle size={12} class="spin" />making… {Math.round(it.progress?.pct ?? 0)}%{#if it.progress?.etaS} · ~{Math.ceil(it.progress.etaS / 60)} min{/if}</span>
+            <span class="badge proc"><LoaderCircle size={12} class="spin" />making… {Math.round(it.progress?.pct ?? 0)}%{#if it.progress?.etaS} · ~{Math.ceil(it.progress.etaS / 60)} min{/if}{#if it.playable} · can start{/if}</span>
           {:else if it.status === 'failed'}
             <span class="badge fail" title={it.error}>failed</span>
           {/if}

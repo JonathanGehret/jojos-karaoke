@@ -439,11 +439,19 @@ export class Room extends DurableObject<Env> {
           s.history.push({ songId: s.nowPlaying.songId, memberId: s.nowPlaying.memberId, at: Date.now() });
           s.history = s.history.slice(-200);
         }
-        const i = s.queue.findIndex((q) => q.status === 'ready');
+        const i = s.queue.findIndex((q) => q.status === 'ready' || (q.status === 'processing' && q.playable));
         s.nowPlaying = i >= 0 ? s.queue.splice(i, 1)[0] : null;
         s.currentLyrics = null;
         s.playback = { ...idlePlayback(), key: 0, vocal: s.playback.vocal,
           queueItemId: s.nowPlaying?.id ?? null, songId: s.nowPlaying?.songId ?? null };
+        break;
+      }
+
+      case 'queue.playable': {
+        need(att.role === 'screen', 'screen only');
+        const it = s.queue.find((q) => q.id === msg.itemId && q.status === 'processing');
+        if (!it) return;
+        it.playable = true;
         break;
       }
 

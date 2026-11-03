@@ -98,9 +98,12 @@ export class Stft {
 
 export interface Separated { instL: Float32Array; instR: Float32Array; vocL: Float32Array; vocR: Float32Array }
 
-/** Separate a whole song (44.1 kHz stereo). */
+/** Separate a whole song (44.1 kHz stereo). `onPart(done)` is called whenever more of the
+ *  result is final: samples [0, done) of the returned arrays won't change any more (the same
+ *  arrays are returned at the end), so playback can start before the whole song is done. */
 export async function separate(left: Float32Array, right: Float32Array, model: ModelFn, c: MdxConfig = INST_HQ_3,
-  onProgress?: (frac: number) => void, overlap = 0.25): Promise<Separated> {
+  onProgress?: (frac: number) => void, overlap = 0.25,
+  onPart?: (done: number, out: Separated) => void): Promise<Separated> {
   const st = new Stft(c);
   const chunk = st.chunk;
   const trim = c.nFft >> 1;
@@ -117,6 +120,27 @@ export async function separate(left: Float32Array, right: Float32Array, model: M
   const step = Math.max(1, Math.floor((1 - overlap) * chunk));
   const starts: number[] = [];
   for (let i = 0; i < total; i += step) starts.push(i);
+
+  const primL = new Float32Array(n), primR = new Float32Array(n);
+  const otherL = new Float32Array(n), otherR = new Float32Array(n);
+  const out: Separated = c.primary === 'instrumental'
+    ? { instL: primL, instR: primR, vocL: otherL, vocR: otherR }
+    : { instL: otherL, instR: otherR, vocL: primL, vocR: primR };
+  let done = 0;
+  // output sample k is final once no later chunk overlaps it (acc index trim + k)
+  const finalize = (upTo: number) => {
+    upTo = Math.min(n, Math.max(done, upTo));
+    for (let k = done; k < upTo; k++) {
+      const d = Math.max(div[trim + k], 1e-4);
+      const pl = accL[trim + k] / d, pr = accR[trim + k] / d;
+      primL[k] = pl; primR[k] = pr;
+      otherL[k] = left[k] - primL[k];
+      otherR[k] = right[k] - primR[k];
+      if (c.primary === 'instrumental') { primL[k] *= c.compensate; primR[k] *= c.compensate; }
+    }
+    done = upTo;
+  };
+
   const partL = new Float32Array(chunk), partR = new Float32Array(chunk);
   for (let s = 0; s < starts.length; s++) {
     const i = starts[s];
@@ -131,22 +155,11 @@ export async function separate(left: Float32Array, right: Float32Array, model: M
       accR[i + k] += oR[k] * w;
       div[i + k] += w;
     }
+    const before = done;
+    finalize(s + 1 < starts.length ? starts[s + 1] - trim : n);
+    if (onPart && done > before) onPart(done, out);
     onProgress?.((s + 1) / starts.length);
   }
-  const primL = new Float32Array(n), primR = new Float32Array(n);
-  for (let k = 0; k < n; k++) {
-    const d = Math.max(div[trim + k], 1e-4);
-    primL[k] = accL[trim + k] / d;
-    primR[k] = accR[trim + k] / d;
-  }
-  const otherL = new Float32Array(n), otherR = new Float32Array(n);
-  for (let k = 0; k < n; k++) {
-    otherL[k] = left[k] - primL[k];
-    otherR[k] = right[k] - primR[k];
-  }
-  if (c.primary === 'instrumental') {
-    for (let k = 0; k < n; k++) { primL[k] *= c.compensate; primR[k] *= c.compensate; }
-    return { instL: primL, instR: primR, vocL: otherL, vocR: otherR };
-  }
-  return { instL: otherL, instR: otherR, vocL: primL, vocR: primR };
+  finalize(n);
+  return out;
 }

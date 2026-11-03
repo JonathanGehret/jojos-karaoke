@@ -71,10 +71,19 @@ async function doSeparate(m: Extract<ToWorker, { type: 'separate' }>) {
   const { s, backend } = await getSession(m.modelUrl, m.id);
   const { dimF, dimT } = m.config;
   const input = s.inputNames[0], output = s.outputNames[0];
+  let sent = 0;
   const res = await separate(m.left, m.right, async (spec) => {
     const out = await s.run({ [input]: new ort.Tensor('float32', spec, [1, 4, dimF, dimT]) });
     return out[output].data as Float32Array;
-  }, m.config, (frac) => post({ id: m.id, type: 'progress', stage: 'separate', frac }));
+  }, m.config, (frac) => post({ id: m.id, type: 'progress', stage: 'separate', frac }), 0.25,
+  m.parts ? (done, out) => {
+    // finished audio while separating, so a song can start playing before it is done
+    const from = sent;
+    const sl = (a: Float32Array) => a.slice(from, done);
+    const p = { instL: sl(out.instL), instR: sl(out.instR), vocL: sl(out.vocL), vocR: sl(out.vocR) };
+    sent = done;
+    post({ id: m.id, type: 'part', from, ...p }, [p.instL.buffer, p.instR.buffer, p.vocL.buffer, p.vocR.buffer]);
+  } : undefined);
   post({ id: m.id, type: 'separated', ...res, backend },
     [res.instL.buffer, res.instR.buffer, res.vocL.buffer, res.vocR.buffer]);
 }

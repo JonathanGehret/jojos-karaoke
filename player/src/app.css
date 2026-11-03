@@ -367,3 +367,5 @@ ul.songs.local .acts button:not(.primary):hover:not(:disabled) { background: #ff
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .reactions span { display: none; }
 }
+
+.center-card.starved { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); z-index: 5; }

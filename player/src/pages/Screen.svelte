@@ -21,6 +21,7 @@
   import { RoomConnection } from '../lib/room.svelte';
   import { store } from '../lib/store';
   import { BrowserJobRunner } from '../lib/make/runner';
+  import type { EarlySong, MadeSong } from '../lib/make/pipeline';
 
   let { code }: { code: string } = $props();
 
@@ -69,10 +70,103 @@
   let makingHere = $state(false);
   let makingJob = $state<string | null>(null);
 
+  // ---- playing a request while this device is still making it (spec/protocol.md)
+  interface EarlyEntry { e: EarlySong; title: string; first?: { t: number; ready: number }; playableSent: boolean;
+    extendedTo: number; made?: MadeSong }
+  const earlyJobs = new Map<string, EarlyEntry>(); // by queue item id; not reactive (big arrays)
+  let earlyLoaded: string | null = null;            // queue item id whose early audio is loaded
+  let starved = $state(false);                       // playback caught up with the making
+
+  /** Start only when making will stay ahead: measured speed (with 20 % margin) must keep at
+   *  least 15 s of ready audio in front of the singer from the start to the end. */
+  function safeToStart(en: EarlyEntry): boolean {
+    const { e } = en, sr = e.sampleRate, n = e.inst[0].length;
+    if (!e.lyrics) return false;          // phase 1: only with synced lyrics (line timing known now)
+    if (e.ready >= n) return true;
+    if (!en.first) return false;
+    const dt = (performance.now() - en.first.t) / 1000;
+    if (dt < 8) return false;             // measure for a while first
+    const r = (((e.ready - en.first.ready) / sr) / dt) * 0.8; // audio seconds made per second
+    const ready = e.ready / sr, dur = n / sr, startIn = 5, margin = 15;
+    if (ready + r * startIn < margin) return false;
+    return (dur - ready) / Math.max(r, 1e-6) <= dur + startIn - margin;
+  }
+
+  function earlyBuffers(e: EarlySong, frames: number): [AudioBuffer, AudioBuffer] {
+    const mk = (pair: [Float32Array, Float32Array]) => {
+      const b = engine.ctx.createBuffer(2, Math.max(1, frames), e.sampleRate);
+      b.copyToChannel(pair[0].subarray(0, frames) as Float32Array<ArrayBuffer>, 0);
+      b.copyToChannel(pair[1].subarray(0, frames) as Float32Array<ArrayBuffer>, 1);
+      return b;
+    };
+    return [mk(e.inst), mk(e.voc)];
+  }
+
+  /** More audio is ready: swap it in (every 20 s of new audio, or at the end), resume if starved. */
+  function extendEarly(id: string) {
+    const en = earlyJobs.get(id);
+    if (!en || earlyLoaded !== id) return;
+    const { e } = en, n = e.inst[0].length;
+    const done = e.ready >= n;
+    const wantMs = engine.positionMs() + 8000;
+    if (!done && e.ready - en.extendedTo < e.sampleRate * 20 && !(starved && (e.ready * 1000) / e.sampleRate >= wantMs)) return;
+    const [inst, voc] = earlyBuffers(e, e.ready);
+    en.extendedTo = e.ready;
+    engine.extend(inst, voc, !done);
+    if (starved && (done || (e.ready * 1000) / e.sampleRate >= wantMs)) {
+      starved = false;
+      engine.play(engine.positionMs());
+      playing = true;
+      publish();
+    }
+  }
+
+  function onEarly(job: { queueItemId: string; title: string }, e: EarlySong) {
+    let en = earlyJobs.get(job.queueItemId);
+    if (!en) { en = { e, title: job.title, playableSent: false, extendedTo: 0 }; earlyJobs.set(job.queueItemId, en); }
+    en.e = e;
+    if (!en.first && e.ready > 0) en.first = { t: performance.now(), ready: e.ready };
+    if (!en.playableSent && safeToStart(en) && queue.some((q) => q.id === job.queueItemId)) {
+      en.playableSent = true;
+      conn?.send({ type: 'queue.playable', itemId: job.queueItemId });
+    }
+    extendEarly(job.queueItemId);
+  }
+
+  function onMade(job: { queueItemId: string }, song: MadeSong) {
+    const en = earlyJobs.get(job.queueItemId);
+    if (!en) return;
+    if (earlyLoaded !== job.queueItemId) { earlyJobs.delete(job.queueItemId); return; } // plays the normal way later
+    en.made = song;
+    en.e.ready = en.e.inst[0].length;
+    extendEarly(job.queueItemId);
+    // the word-timed lyrics replace the line timing
+    rawLyrics = song.lyrics;
+    lyrics = shiftLyrics(song.lyrics, songOffset);
+    sendLyrics();
+  }
+
+  function onFailed(job: { queueItemId: string; title: string }, message: string) {
+    const en = earlyJobs.get(job.queueItemId);
+    earlyJobs.delete(job.queueItemId);
+    if (!en || earlyLoaded !== job.queueItemId) return;
+    if (en.e.ready >= en.e.inst[0].length) return; // the audio is all here: let it finish
+    say(`Could not finish making "${job.title}": ${message}. Skipping.`);
+    skip();
+  }
+
+  engine.onStarved = () => {
+    starved = true;
+    playing = false;
+    publish();
+  };
+
   function toggleMakingHere() {
-    if (runner) { runner.stop(); runner = null; makingHere = false; makingJob = null; return; }
+    if (runner) { runner.stop(); runner = null; makingHere = false; makingJob = null; store.makeHere = false; return; }
+    store.makeHere = true;
     runner = new BrowserJobRunner(code, admin!, {
       onJob: (j, p) => (makingJob = j ? `${j.title} ${Math.round(p ?? 0)}%` : null),
+      onEarly, onMade, onFailed,
     });
     runner.start();
     makingHere = true;
@@ -82,7 +176,7 @@
 
   const queue = $derived(conn?.state?.queue ?? []);
   const nowItem = $derived(conn?.state?.nowPlaying ?? null);
-  const upNext = $derived(queue.find((q) => q.status === 'ready') ?? null);
+  const upNext = $derived(queue.find((q) => q.status === 'ready' || (q.status === 'processing' && q.playable)) ?? null);
   const guests = $derived(conn?.state?.members.filter((m) => m.online && m.role === 'guest').length ?? 0);
   const canCast = typeof window !== 'undefined' && 'PresentationRequest' in window;
 
@@ -112,11 +206,41 @@
       if (!engine.pitchShift) say('Key change is not supported in this browser; tempo will shift the pitch.');
     }
     engine.setVocal(vocal);
-    engine.onEnded = () => { playing = false; publish(); conn?.send({ type: 'advance' }); };
+    engine.onEnded = () => { playing = false; publish(); endedId = loadedItem?.id ?? null; endedTries = 0; conn?.send({ type: 'advance' }); };
     started = true;
     keepAwake();
+    if (store.makeHere && !runner && admin) toggleMakingHere(); // the host makes requests by default
     publishDeviceSongs();
     if (nowItem && nowItem.id !== loadedItem?.id) load(nowItem);
+  }
+
+  /** A request this device is still making: play the part that's ready, extend as it grows. */
+  async function loadEarly(item: QueueItem, my: number) {
+    const en = earlyJobs.get(item.id)!;
+    const { e } = en, n = e.inst[0].length;
+    earlyLoaded = item.id;
+    const [inst, voc] = earlyBuffers(e, e.ready);
+    en.extendedTo = e.ready;
+    engine.load(inst, voc, e.ready < n);
+    const lyr = en.made?.lyrics ?? e.lyrics ?? { version: 1, lines: [] };
+    media = { manifest: { id: '', title: item.title, artist: item.artist, durationMs: e.durationMs,
+      files: { instrumental: 'instrumental', vocals: 'vocals', lyrics: 'lyrics.json' } } as any,
+      urls: { lyrics: '', vocals: 'local' } };
+    source = 'device';
+    rawLyrics = lyr;
+    songOffset = 0;
+    offsetDirty = false;
+    lyrics = shiftLyrics(lyr, 0);
+    sendLyrics();
+    key = 0; rate = 1;
+    engine.setKey(0); engine.setRate(1);
+    publish();
+    for (countdown = 5; countdown > 0; countdown--) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (my !== loadToken) return;
+    }
+    extendEarly(item.id);
+    play();
   }
 
   async function load(item: QueueItem) {
@@ -128,6 +252,9 @@
     media = null;
     source = null;
     countdown = 0;
+    starved = false;
+    if (earlyLoaded && earlyLoaded !== item.id) { earlyJobs.delete(earlyLoaded); earlyLoaded = null; }
+    if (!item.songId && admin && earlyJobs.has(item.id)) return loadEarly(item, my);
     if (!item.songId || !admin) return;
     loading = true;
     try {
@@ -250,8 +377,18 @@
     const it = nowItem;
     if (!started) return;
     if (it && it.id !== loadedItem?.id) load(it);
+    else if (it && it.id === loadedItem?.id && it.status !== loadedItem.status) loadedItem = it;
     if (!it && loadedItem) { loadToken++; engine.stop(); playing = false; loadedItem = null; media = null; lyrics = null; }
   });
+
+  // a song ended but the room still has it as playing (the "advance" got lost, e.g. the
+  // connection was down at that moment): ask again, a few times
+  let endedId: string | null = null;
+  let endedTries = 0;
+  const advanceRetry = setInterval(() => {
+    if (!endedId || nowItem?.id !== endedId || playing) { endedId = nowItem?.id === endedId ? endedId : null; return; }
+    if (endedTries++ < 3) conn?.send({ type: 'advance' });
+  }, 5000);
 
   // idle with songs waiting → start the next one
   $effect(() => {
@@ -319,7 +456,7 @@
     }
   }
 
-  onDestroy(() => {
+  onDestroy(() => { clearInterval(advanceRetry);
     off?.();
     offLib();
     if (coverUrl) URL.revokeObjectURL(coverUrl);
@@ -390,6 +527,9 @@
 
       {#if started && loadedItem && lyrics && countdown === 0}
         <LyricsView {lyrics} clock={lyricsClock} />
+      {/if}
+      {#if starved}
+        <div class="center-card starved" role="status"><p>Still making the rest of “{loadedItem?.title}”… it continues in a moment.</p></div>
       {/if}
 
       <div class="reactions" aria-hidden="true">

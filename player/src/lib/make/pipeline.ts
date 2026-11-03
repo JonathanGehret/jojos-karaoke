@@ -37,7 +37,24 @@ export interface MakeOptions {
   asrModel?: string;
   alignModel?: string;          // forced-alignment model (Hugging Face id)
   onProgress?: (stage: string, pct: number, detail?: string) => void;
+  /** Audio (and line-timed lyrics, when synced lyrics were given) while the song is still being
+   *  made, so it can start playing early. Not called when vocals aren't removed. */
+  onEarly?: (e: EarlySong) => void;
   signal?: AbortSignal;
+}
+
+/** A song that is still being made: `ready` frames of the full-length arrays are final. */
+export interface EarlySong {
+  sampleRate: number;
+  durationMs: number;
+  /** frames that are final (grows; equals the length when separation is done) */
+  ready: number;
+  /** performance.now() when separation started (to measure its speed) */
+  startedAt: number;
+  inst: [Float32Array, Float32Array];
+  voc: [Float32Array, Float32Array];
+  /** line-timed lyrics from synced (LRC) lyrics, or null (no early lyrics: don't start early) */
+  lyrics: Lyrics | null;
 }
 
 export interface MadeSong {
@@ -65,7 +82,7 @@ class WorkerClient {
       this.w.onmessage = (e: MessageEvent<FromWorker>) => {
         const p = this.pending.get(e.data.id);
         if (!p) return;
-        if (e.data.type === 'progress') return p.onProgress?.(e.data);
+        if (e.data.type === 'progress' || e.data.type === 'part') return p.onProgress?.(e.data);
         this.pending.delete(e.data.id);
         if (e.data.type === 'error') p.rej(new Error(e.data.message));
         else p.res(e.data);
@@ -145,9 +162,28 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   let inst: [Float32Array, Float32Array] = [left, right];
   let voc: [Float32Array, Float32Array] | null = null;
   if (o.separate !== false) {
+    // early playback: synced lyrics give line timing right away; the audio arrives in parts
+    let early: EarlySong | null = null;
+    if (o.onEarly) {
+      const n = left.length;
+      const syncedLines = o.lyricsText?.trim() ? parseLyrics(o.lyricsText, o.duets) : [];
+      const synced = syncedLines.length > 0 && syncedLines.every((l) => l.start != null);
+      early = { sampleRate, durationMs, ready: 0, startedAt: performance.now(),
+        inst: [new Float32Array(n), new Float32Array(n)], voc: [new Float32Array(n), new Float32Array(n)],
+        lyrics: synced ? fromLrcTimings(syncedLines, durationMs) : null };
+    }
     const m = await makerWorker.call({ type: 'separate', left: left.slice(), right: right.slice(),
-      modelUrl: o.modelUrl ?? `/api/models/${SEPARATION_MODEL.name}`, config: o.modelConfig ?? SEPARATION_MODEL.config },
-    [], (p) => p.type === 'progress' && prog(p.stage, p.frac, p.detail), o.signal);
+      modelUrl: o.modelUrl ?? `/api/models/${SEPARATION_MODEL.name}`, config: o.modelConfig ?? SEPARATION_MODEL.config,
+      parts: !!early },
+    [], (p) => {
+      if (p.type === 'progress') prog(p.stage, p.frac, p.detail);
+      else if (p.type === 'part' && early) {
+        early.inst[0].set(p.instL, p.from); early.inst[1].set(p.instR, p.from);
+        early.voc[0].set(p.vocL, p.from); early.voc[1].set(p.vocR, p.from);
+        early.ready = p.from + p.instL.length;
+        try { o.onEarly?.(early); } catch { /* early playback must never break making the song */ }
+      }
+    }, o.signal);
     if (m.type !== 'separated') throw new Error('separation failed');
     inst = [m.instL, m.instR];
     voc = [m.vocL, m.vocR];
