@@ -265,6 +265,9 @@ ul.songs { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 ul.songs li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
 .song { width: 100%; display: flex; justify-content: space-between; align-items: center; text-align: left; background: #ffffff09;
   border-radius: var(--r); padding: .7rem .8rem .7rem 1rem; gap: .8rem; }
+.add-songs summary { display: flex; align-items: center; gap: .4rem; cursor: pointer; font-weight: 600; }
+.add-songs .search-box { margin: .6rem 0 .5rem; }
+.add-songs ul.songs { max-height: 40vh; overflow-y: auto; margin-top: .5rem; }
 .song .what { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .song .what b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .song .plus { display: grid; place-items: center; width: 2.2rem; height: 2.2rem; border-radius: 999px; background: #ffd34d1f; color: var(--accent); flex: none; }

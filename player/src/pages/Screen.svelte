@@ -3,7 +3,7 @@
   // It is the playback authority: guests follow the `playback` messages it publishes.
   import { onDestroy } from 'svelte';
   import {
-    Cast, ListMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw, Settings2, SkipForward, Smartphone, Users, X,
+    Cast, ListMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw, Search, Settings2, SkipForward, Smartphone, Users, X,
   } from '@lucide/svelte';
   import { type Lyrics, shiftLyrics } from '$shared/lyrics';
   import type { QueueItem, ServerMsg } from '$shared/protocol';
@@ -50,6 +50,14 @@
   let songOffset = $state(0);
   let offsetDirty = $state(false);
   let showQueue = $state(true);
+  // the host can queue songs here too, like a guest does on their phone
+  let songSearch = $state('');
+  const pickable = $derived((conn?.library ?? []).filter((x) =>
+    (x.title + ' ' + x.artist).toLowerCase().includes(songSearch.trim().toLowerCase())));
+  function addSong(id: string, title: string) {
+    conn?.send({ type: 'queue.add', songId: id });
+    say(`Added “${title}”`);
+  }
   let showControls = $state(true);
   let showAdminQr = $state(false);
   let toast = $state<string | null>(null);
@@ -434,6 +442,24 @@
           onmove={(id, to) => conn?.send({ type: 'queue.move', itemId: id, to })}
           onremove={(id) => conn?.send({ type: 'queue.remove', itemId: id })}
           onplaynext={(id) => conn?.send({ type: 'queue.playNext', itemId: id })} />
+        {#if conn?.library.length}
+          <details class="box add-songs" open={!queue.length}>
+            <summary><Plus size={16} />Add a song</summary>
+            {#if conn.library.length > 6}
+              <div class="search-box search"><Search size={18} />
+                <input type="search" bind:value={songSearch} placeholder="Search {conn.library.length} songs" aria-label="Search songs" /></div>
+            {/if}
+            <ul class="songs">
+              {#each pickable as x (x.id)}
+                <li><button class="song" onclick={() => addSong(x.id, x.title)} aria-label="Add {x.title} to the queue">
+                  <span class="what"><b>{x.title}</b><span class="muted">{x.artist}{x.artist ? ' · ' : ''}{mmss(x.durationMs)}</span></span>
+                  <span class="plus"><Plus size={18} /></span></button></li>
+              {:else}
+                <li class="hint">No match for “{songSearch}”.</li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
         {#if queue.some((q) => q.status === 'processing') && !conn?.state?.workersOnline}
           <p class="hint warn">Requests are waiting to be made: turn on “Make requests on this device”, open
             <b>Make a song → Help at a party</b> on another laptop, or run <code>jojo worker --room {code}</code>.</p>
