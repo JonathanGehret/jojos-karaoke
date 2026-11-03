@@ -3,17 +3,16 @@
   // With the host token (from the host's 📱 QR or after casting) it is also the remote control.
   import { onDestroy } from 'svelte';
   import {
-    AudioLines, Download, FileAudio, Gamepad2, ListMusic, MicVocal, Minus, Music, Pause, Play, Plus, Save, Search,
-    Send, SkipBack, SkipForward, Upload, User, WifiOff, X,
+    AudioLines, Download, Gamepad2, ListMusic, MicVocal, Minus, Music, Pause, Play, Plus, Save, Search,
+    SkipBack, SkipForward, Upload, User, WifiOff, X,
   } from '@lucide/svelte';
   import type { Lyrics } from '$shared/lyrics';
-  import LyricsFinder from '../components/LyricsFinder.svelte';
   import { REACTIONS, cleanNickname } from '$shared/protocol';
   import LyricsView from '../components/LyricsView.svelte';
   import QueueList from '../components/QueueList.svelte';
+  import RequestForm from '../components/RequestForm.svelte';
   import Toast from '../components/Toast.svelte';
-  import { roomInfo, uploadForRequest } from '../lib/api';
-  import { audioDuration, guessFromFilename, songInfo } from '../lib/audioTags';
+  import { roomInfo } from '../lib/api';
   import { downloadBytes, importJkp } from '../lib/localLibrary';
   import { keepAwake, vibrate } from '../lib/device';
   import { mmss } from '../lib/format';
@@ -37,15 +36,6 @@
 
   let toast = $state<string | null>(null);
   let alerted = '';
-
-  // request form
-  let reqFile = $state<File | null>(null);
-  let reqTitle = $state('');
-  let reqArtist = $state('');
-  let reqLyrics = $state('');
-  let reqDuration = $state(0);
-  let reqBusy = $state(false);
-  let reqFinder = $state<LyricsFinder | null>(null);
 
   roomInfo(code).then((r) => (ownerName = r.ownerName)).catch(() => (missing = true));
 
@@ -110,38 +100,6 @@
   function add(id: string) {
     conn?.send({ type: 'queue.add', songId: id });
     say('Added to the queue');
-  }
-
-  async function request(e: Event) {
-    e.preventDefault();
-    if (!reqFile || !conn?.memberToken) return;
-    if (reqFile.size > 60 * 1024 * 1024) return say('That file is too big (max 60 MB).');
-    reqBusy = true;
-    try {
-      const { uploadId } = await uploadForRequest(code, conn.memberToken, reqFile);
-      conn.send({ type: 'request.add', uploadId, title: reqTitle.trim() || reqFile.name.replace(/\.[^.]+$/, ''),
-        artist: reqArtist.trim(), lyrics: reqLyrics.trim() || undefined });
-      reqFile = null; reqTitle = ''; reqArtist = ''; reqLyrics = ''; reqFinder?.reset();
-      say('Request sent! It will show in the queue while it is being made.');
-      tab = 'queue';
-    } catch (err) { say((err as Error).message); }
-    finally { reqBusy = false; }
-  }
-
-  async function pickFile(e: Event) {
-    const f = (e.target as HTMLInputElement).files?.[0] ?? null;
-    reqFile = f;
-    reqLyrics = ''; reqDuration = 0;
-    reqFinder?.reset();
-    if (!f) return;
-    ({ title: reqTitle, artist: reqArtist } = guessFromFilename(f.name));
-    const info = await songInfo(f);
-    if (reqFile !== f) return;
-    reqTitle = info.title; reqArtist = info.artist;
-    const d = await audioDuration(f);
-    if (reqFile !== f) return;
-    reqDuration = d;
-    reqFinder?.search(true);
   }
 
   const ctl = (action: 'play' | 'pause' | 'skip' | 'restart') => conn?.send({ type: 'control', action });
@@ -237,26 +195,8 @@
           onplaynext={(id) => conn?.send({ type: 'queue.playNext', itemId: id })} />
 
       {:else if tab === 'request'}
-        <form class="stack" onsubmit={request}>
-          <h3>Request a song</h3>
-          <p class="hint" style="margin-top:0">Not in the list? Upload your own copy: it is turned into karaoke during the
-            party, and you can download the karaoke version afterwards.</p>
-          {#if !st?.workersOnline}
-            <p class="hint warn">No device is making songs right now. Your request waits until the host
-              turns on “Make requests on this device” or a friend helps from <b>Make a song</b>.</p>
-          {/if}
-          <label class="dropzone">
-            <FileAudio size={28} />
-            <span class="what">{#if reqFile}<b>{reqFile.name}</b><span class="hint">Tap to pick another</span>
-              {:else}<b>Choose a song file</b><span class="hint">From your phone's files</span>{/if}</span>
-            <input type="file" accept="audio/*,.mp3,.m4a,.flac,.wav,.ogg,.opus" onchange={pickFile} required />
-          </label>
-          <input bind:value={reqTitle} placeholder="Title" aria-label="Title" maxlength="120" required />
-          <input bind:value={reqArtist} placeholder="Artist" aria-label="Artist" maxlength="120" />
-          <span class="field-label">Lyrics <span class="hint" style="margin:0; font-weight:400">optional: otherwise looked up or transcribed</span></span>
-          <LyricsFinder bind:this={reqFinder} bind:value={reqLyrics} title={reqTitle} artist={reqArtist} duration={reqDuration} />
-          <button class="primary big" type="submit" disabled={reqBusy || !reqFile}><Send size={20} />{reqBusy ? 'Uploading…' : 'Request song'}</button>
-        </form>
+        <RequestForm {code} {conn} workersOnline={!!st?.workersOnline} onerror={say}
+          onsent={() => { say('Request sent! It will show in the queue while it is being made.'); tab = 'queue'; }} />
 
       {:else if tab === 'host' && admin}
         <div class="stack">

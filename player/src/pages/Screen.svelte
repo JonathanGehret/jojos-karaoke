@@ -3,13 +3,14 @@
   // It is the playback authority: guests follow the `playback` messages it publishes.
   import { onDestroy } from 'svelte';
   import {
-    Cast, ListMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw, Search, Settings2, SkipForward, Smartphone, Users, X,
+    Cast, ListMusic, Maximize, Minus, Pause, PencilLine, Play, Plus, RotateCcw, Search, Upload, Settings2, SkipForward, Smartphone, Users, X,
   } from '@lucide/svelte';
   import { type Lyrics, shiftLyrics } from '$shared/lyrics';
   import type { QueueItem, ServerMsg } from '$shared/protocol';
   import LyricsView from '../components/LyricsView.svelte';
   import Qr from '../components/Qr.svelte';
   import QueueList from '../components/QueueList.svelte';
+  import RequestForm from '../components/RequestForm.svelte';
   import Toast from '../components/Toast.svelte';
   import { type Media, fetchJson, saveLyrics, songMedia } from '../lib/api';
   import { AudioEngine, KEY_RANGE, decode, fetchAudio, unlockAudio } from '../lib/audio/engine';
@@ -52,6 +53,7 @@
   let showQueue = $state(true);
   // the host can queue songs here too, like a guest does on their phone
   let songSearch = $state('');
+  let requestOpen = $state(false);
   const pickable = $derived((conn?.library ?? []).filter((x) =>
     (x.title + ' ' + x.artist).toLowerCase().includes(songSearch.trim().toLowerCase())));
   function addSong(id: string, title: string) {
@@ -458,6 +460,13 @@
                 <li class="hint">No match for “{songSearch}”.</li>
               {/each}
             </ul>
+          </details>
+        {/if}
+        {#if started}
+          <details class="box add-songs" bind:open={requestOpen}>
+            <summary><Upload size={16} />Request a new song</summary>
+            <RequestForm {code} {conn} compact workersOnline={!!conn?.state?.workersOnline} onerror={say}
+              onsent={() => { say('Request sent: it is being made and shows in the queue.'); requestOpen = false; }} />
           </details>
         {/if}
         {#if queue.some((q) => q.status === 'processing') && !conn?.state?.workersOnline}
