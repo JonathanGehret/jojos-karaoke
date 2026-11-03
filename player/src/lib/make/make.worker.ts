@@ -142,36 +142,70 @@ async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
 }
 
 // ---- forced alignment (wav2vec2 CTC): where each word of known lyrics is sung
-let ctc: { model: string; m: any; vocab: Record<string, number>; backend: string } | null = null;
+interface Ctc { model: string; m: any; vocab: Record<string, number>; backend: string }
+let ctc: Ctc | null = null;
 const CTC_FRAME_MS = 20; // wav2vec2 emits one frame per 320 samples at 16 kHz
 const CHUNK_S = 30, CONTEXT_S = 1;
 
-async function doAlign(m: Extract<ToWorker, { type: 'align' }>) {
-  const tf = await import('@huggingface/transformers');
-  tf.env.allowLocalModels = false;
-  tf.env.remoteHost = `${self.location.origin}/api/hf/`;
-  (tf.env.backends.onnx as any).wasm.wasmPaths = RUNTIME;
-  if (ctc?.model !== m.model) {
+let ctcLoading: Promise<Ctc> | null = null;
+
+/** The forced-alignment model (loaded once; several calls may ask at the same time). */
+async function getCtc(model: string, id: number): Promise<Ctc> {
+  if (ctc?.model === model) return ctc;
+  if (!ctcLoading) ctcLoading = (async () => {
+    const tf = await import('@huggingface/transformers');
+    tf.env.allowLocalModels = false;
+    tf.env.remoteHost = `${self.location.origin}/api/hf/`;
+    (tf.env.backends.onnx as any).wasm.wasmPaths = RUNTIME;
     // GPU only with half precision (189 MB); otherwise the 8-bit model on the CPU (95 MB):
     // the full-precision GPU model would be a 378 MB download
     const adapter = await (navigator as any).gpu?.requestAdapter().catch(() => null);
     const f16 = !!adapter?.features?.has('shader-f16');
     const files = new Map<string, number>();
     let fromNetwork = false;
-    const model = await tf.AutoModelForCTC.from_pretrained(m.model, {
+    const m = await tf.AutoModelForCTC.from_pretrained(model, {
       device: f16 ? 'webgpu' : 'wasm', dtype: f16 ? 'fp16' : 'q8',
       progress_callback: (e: any) => {
         if (e.status === 'download') fromNetwork = true;
         if (e.status === 'progress' && e.file) {
           files.set(e.file, e.progress ?? 0);
           const avg = [...files.values()].reduce((a, b) => a + b, 0) / (files.size * 100);
-          post({ id: m.id, type: 'progress', stage: fromNetwork ? 'download' : 'load', frac: avg, detail: 'timing model' });
+          post({ id, type: 'progress', stage: fromNetwork ? 'download' : 'load', frac: avg, detail: 'timing model' });
         }
       },
     } as any);
-    const vocab = await (await fetch(`${tf.env.remoteHost}${m.model}/resolve/main/vocab.json`)).json();
-    ctc = { model: m.model, m: model, vocab, backend: f16 ? 'webgpu' : 'wasm' };
-  }
+    const vocab = await (await fetch(`${tf.env.remoteHost}${model}/resolve/main/vocab.json`)).json();
+    ctc = { model, m, vocab, backend: f16 ? 'webgpu' : 'wasm' };
+    return ctc;
+  })().finally(() => { ctcLoading = null; });
+  return ctcLoading;
+}
+
+/** Character probabilities for one piece of audio (16 kHz mono), for aligning while a song is
+ *  still being made. Normalised per piece, like the model's own feature extractor does. */
+async function doLogits(m: Extract<ToWorker, { type: 'logits' }>) {
+  const c = await getCtc(m.model, m.id);
+  const tf = await import('@huggingface/transformers');
+  const x = m.audio;
+  let mean = 0;
+  for (let i = 0; i < x.length; i++) mean += x[i];
+  mean /= x.length || 1;
+  let v = 0;
+  for (let i = 0; i < x.length; i++) v += (x[i] - mean) ** 2;
+  const sd = Math.sqrt(v / (x.length || 1) + 1e-7);
+  const seg = new Float32Array(x.length);
+  for (let i = 0; i < x.length; i++) seg[i] = (x[i] - mean) / sd;
+  const out = await c.m({ input_values: new tf.Tensor('float32', seg, [1, seg.length]) });
+  const lg = out.logits;
+  const logits = (lg.data as Float32Array).slice();
+  const frames = lg.dims[1], V = lg.dims[2];
+  lg.dispose?.();
+  post({ id: m.id, type: 'logits', logits, frames, V, vocab: c.vocab, backend: c.backend }, [logits.buffer]);
+}
+
+async function doAlign(m: Extract<ToWorker, { type: 'align' }>) {
+  const tf = await import('@huggingface/transformers');
+  const ctc = await getCtc(m.model, m.id);
   const { charIds, forcedAlign, logSoftmax } = await import('./ctc');
   // zero mean, unit variance over the whole track (the model's feature extractor does this)
   const x = m.audio;
@@ -213,6 +247,7 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
     if (m.type === 'separate') await doSeparate(m);
     else if (m.type === 'transcribe') await doTranscribe(m);
     else if (m.type === 'align') await doAlign(m);
+    else if (m.type === 'logits') await doLogits(m);
   } catch (err) {
     post({ id: m.id, type: 'error', message: (err as Error)?.message ?? String(err) });
   }

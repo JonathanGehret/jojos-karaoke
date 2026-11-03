@@ -5,7 +5,8 @@ import type { TimedWord } from './align';
 export type ToWorker =
   | { id: number; type: 'separate'; left: Float32Array; right: Float32Array; modelUrl: string; config: MdxConfig; parts?: boolean }
   | { id: number; type: 'transcribe'; audio: Float32Array; model: string; language?: string }
-  | { id: number; type: 'align'; audio: Float32Array; model: string; tokens: string[] };
+  | { id: number; type: 'align'; audio: Float32Array; model: string; tokens: string[] }
+  | { id: number; type: 'logits'; audio: Float32Array; model: string };
 
 export type FromWorker =
   | { id: number; type: 'progress'; stage: 'download' | 'load' | 'separate' | 'transcribe'; frac: number; detail?: string }
@@ -15,4 +16,6 @@ export type FromWorker =
   | { id: number; type: 'transcribed'; words: TimedWord[]; language?: string; backend: string }
   // one entry per token (ms); null where the token has no letters the model knows
   | { id: number; type: 'aligned'; words: ({ start: number; end: number; score: number } | null)[]; backend: string }
+  // raw per-frame character scores [frames, V] for one piece of audio (20 ms frames)
+  | { id: number; type: 'logits'; logits: Float32Array; frames: number; V: number; vocab: Record<string, number>; backend: string }
   | { id: number; type: 'error'; message: string };

@@ -3,7 +3,8 @@
 import type { Lyrics } from '$shared/lyrics';
 import { api } from '../api';
 import { assemble, fromLrcTimings, fromVoiceActivity, splitIntoLines, tokenize, voicedRegions, type TimedWord } from './align';
-import { decodeFile, encodeOpus, toMono16k } from './encode';
+import { decodeFile, encodeOpus, resample, toMono16k } from './encode';
+import { ProgressiveAligner } from './progressive';
 import { type LyricLine, parseLrc, parseLyrics, parseText } from './lyricsInput';
 import { INST_HQ_3, type MdxConfig } from './mdx';
 import type { FromWorker, ToWorker } from './protocol';
@@ -53,8 +54,10 @@ export interface EarlySong {
   startedAt: number;
   inst: [Float32Array, Float32Array];
   voc: [Float32Array, Float32Array];
-  /** line-timed lyrics from synced (LRC) lyrics, or null (no early lyrics: don't start early) */
+  /** word-timed lyrics for the lines whose timing is final, or null (none yet / none possible) */
   lyrics: Lyrics | null;
+  /** word timing is final up to here (ms): playback must stay behind it */
+  alignedMs: number;
 }
 
 export interface MadeSong {
@@ -158,19 +161,58 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   prog('decode', 1);
   o.signal?.throwIfAborted();
 
+  // lyrics lookup (online); started right away when the song may play early, so the timing
+  // can start while vocals are still being removed
+  type Found = { lines: LyricLine[]; source: 'lrclib' | 'none'; warning?: string };
+  const lookup = async (): Promise<Found> => {
+    try {
+      const q = new URLSearchParams({ title: o.title, artist: o.artist, duration: String(Math.round(durationMs / 1000)) });
+      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 30000 });
+      if (r.synced) return { lines: parseLrc(r.synced), source: 'lrclib' };
+      if (r.plain) return { lines: parseText(r.plain), source: 'lrclib' };
+      return { lines: [], source: 'none', warning: 'No lyrics found online.' };
+    } catch { return { lines: [], source: 'none', warning: 'Lyrics lookup failed.' }; }
+  };
+  const given = o.lyricsText?.trim() ? parseLyrics(o.lyricsText, o.duets) : null;
+  const canLookup = !given && o.lookup !== false && !!o.title;
+  const lookupEarly = o.onEarly && o.separate !== false && canLookup ? lookup() : null;
+
   // 1. vocal separation
   let inst: [Float32Array, Float32Array] = [left, right];
   let voc: [Float32Array, Float32Array] | null = null;
+  // early playback: the audio arrives in parts, and the word timing is worked out alongside
+  let early: EarlySong | null = null;
+  let aligner: ProgressiveAligner | null = null;
+  let alignerLines: LyricLine[] | null = null;
   if (o.separate !== false) {
-    // early playback: synced lyrics give line timing right away; the audio arrives in parts
-    let early: EarlySong | null = null;
+    const emit = () => {
+      if (!early) return;
+      early.lyrics = aligner && !aligner.failed ? aligner.lyrics() : null;
+      early.alignedMs = aligner && !aligner.failed ? aligner.alignedMs : 0;
+      try { o.onEarly?.(early); } catch { /* early playback must never break making the song */ }
+    };
+    const feed = () => {
+      if (!early || !aligner) return;
+      aligner.feed(early.voc[0], early.voc[1], early.ready).then(emit);
+    };
+    const startAligner = (ls: LyricLine[]) => {
+      // exact word timing while making needs synced lyrics; otherwise the song waits until done
+      if (!early || o.asr === false || !ProgressiveAligner.supports(ls) || !alignable(ls, o.language)) return;
+      alignerLines = ls;
+      aligner = new ProgressiveAligner(ls, sampleRate, left.length, durationMs, async (audio) => {
+        const r = await makerWorker.call({ type: 'logits', audio, model: o.alignModel ?? ALIGN_MODEL }, [audio.buffer], undefined, o.signal);
+        if (r.type !== 'logits') throw new Error('alignment failed');
+        return r;
+      }, async (mono, from) => (await resample([mono], from, 16000))[0]);
+      feed();
+    };
     if (o.onEarly) {
       const n = left.length;
-      const syncedLines = o.lyricsText?.trim() ? parseLyrics(o.lyricsText, o.duets) : [];
-      const synced = syncedLines.length > 0 && syncedLines.every((l) => l.start != null);
       early = { sampleRate, durationMs, ready: 0, startedAt: performance.now(),
         inst: [new Float32Array(n), new Float32Array(n)], voc: [new Float32Array(n), new Float32Array(n)],
-        lyrics: synced ? fromLrcTimings(syncedLines, durationMs) : null };
+        lyrics: null, alignedMs: 0 };
+      if (given) startAligner(given);
+      else lookupEarly?.then((f) => { if (!aligner) startAligner(f.lines); });
     }
     const m = await makerWorker.call({ type: 'separate', left: left.slice(), right: right.slice(),
       modelUrl: o.modelUrl ?? `/api/models/${SEPARATION_MODEL.name}`, config: o.modelConfig ?? SEPARATION_MODEL.config,
@@ -181,7 +223,8 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
         early.inst[0].set(p.instL, p.from); early.inst[1].set(p.instR, p.from);
         early.voc[0].set(p.vocL, p.from); early.voc[1].set(p.vocR, p.from);
         early.ready = p.from + p.instL.length;
-        try { o.onEarly?.(early); } catch { /* early playback must never break making the song */ }
+        emit();
+        feed();
       }
     }, o.signal);
     if (m.type !== 'separated') throw new Error('separation failed');
@@ -195,17 +238,14 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   prog('lyrics', 0);
   let lines: LyricLine[] = [];
   let source: 'user' | 'lrclib' | 'transcribed' | 'none' = 'none';
-  if (o.lyricsText?.trim()) {
-    lines = parseLyrics(o.lyricsText, o.duets);
+  if (given) {
+    lines = given;
     source = o.lyricsSource ?? 'user';
-  } else if (o.lookup !== false && o.title) {
-    try {
-      const q = new URLSearchParams({ title: o.title, artist: o.artist, duration: String(Math.round(durationMs / 1000)) });
-      const r = await api<{ synced: string | null; plain: string | null }>(`/api/lyrics?${q}`, { token: o.token, timeout: 30000 });
-      if (r.synced) { lines = parseLrc(r.synced); source = 'lrclib'; }
-      else if (r.plain) { lines = parseText(r.plain); source = 'lrclib'; }
-      else warnings.push('No lyrics found online.');
-    } catch { warnings.push('Lyrics lookup failed.'); }
+  } else if (canLookup) {
+    const f = await (lookupEarly ?? lookup());
+    lines = f.lines;
+    if (f.source === 'lrclib') source = 'lrclib';
+    if (f.warning) warnings.push(f.warning);
   }
   prog('lyrics', 1);
 
@@ -213,8 +253,22 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   const vocalsMono16 = await toMono16k(...(voc ?? inst), sampleRate);
   let lyrics: Lyrics = { version: 1, lines: [] };
   let words: TimedWord[] | null = null;
+  // early playback already worked the timing out piece by piece: that is the timing
+  // (set in callbacks: TypeScript can't see that)
+  const al = aligner as ProgressiveAligner | null;
+  const alLines = alignerLines as LyricLine[] | null;
+  const ear = early as EarlySong | null;
+  if (al && ear && alLines === lines) {
+    await al.feed(ear.voc[0], ear.voc[1], left.length);
+    const placed = al.words();
+    const tokens = lines.flatMap((l) => tokenize(l.text)).length;
+    if (al.complete && placed.length >= tokens * 0.5) {
+      words = placed;
+      backend = `${backend}; ctc-progressive`;
+    }
+  }
   // known lyrics: forced alignment finds where each word is sung (much tighter than ASR timestamps)
-  if (o.asr !== false && lines.length && alignable(lines, o.language)) {
+  if (!words && o.asr !== false && lines.length && alignable(lines, o.language)) {
     try {
       const tokens = lines.flatMap((l) => tokenize(l.text));
       const m = await makerWorker.call({ type: 'align', audio: vocalsMono16.slice(), model: o.alignModel ?? ALIGN_MODEL, tokens }, [],

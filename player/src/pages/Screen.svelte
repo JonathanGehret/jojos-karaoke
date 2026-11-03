@@ -71,23 +71,31 @@
   let makingJob = $state<string | null>(null);
 
   // ---- playing a request while this device is still making it (spec/protocol.md)
-  interface EarlyEntry { e: EarlySong; title: string; first?: { t: number; ready: number }; playableSent: boolean;
-    extendedTo: number; made?: MadeSong }
+  interface EarlyEntry { e: EarlySong; title: string; first?: { t: number; readyMs: number }; playableSent: boolean;
+    extendedTo: number; lyricLines: number; made?: MadeSong }
   const earlyJobs = new Map<string, EarlyEntry>(); // by queue item id; not reactive (big arrays)
   let earlyLoaded: string | null = null;            // queue item id whose early audio is loaded
   let starved = $state(false);                       // playback caught up with the making
 
-  /** Start only when making will stay ahead: measured speed (with 20 % margin) must keep at
-   *  least 15 s of ready audio in front of the singer from the start to the end. */
+  /** How far the song is ready to sing (ms): audio AND exact word timing. */
+  function readyMs(en: EarlyEntry): number {
+    if (en.made) return en.e.durationMs;
+    return Math.min((en.e.ready * 1000) / en.e.sampleRate, en.e.alignedMs);
+  }
+
+  /** Start only when making will stay ahead: the measured speed (with a 20 % margin) must keep
+   *  at least 20 s of ready audio with exact word timing in front of the singer, to the end
+   *  (timing moves forward in steps of up to 30 s; the guard pauses if it ever falls behind). */
   function safeToStart(en: EarlyEntry): boolean {
-    const { e } = en, sr = e.sampleRate, n = e.inst[0].length;
-    if (!e.lyrics) return false;          // phase 1: only with synced lyrics (line timing known now)
-    if (e.ready >= n) return true;
+    const { e } = en;
+    if (!e.lyrics) return false;           // no word timing yet (or none possible: then it waits)
+    const dur = e.durationMs / 1000, ready = readyMs(en) / 1000;
+    if (ready >= dur) return true;
     if (!en.first) return false;
     const dt = (performance.now() - en.first.t) / 1000;
-    if (dt < 8) return false;             // measure for a while first
-    const r = (((e.ready - en.first.ready) / sr) / dt) * 0.8; // audio seconds made per second
-    const ready = e.ready / sr, dur = n / sr, startIn = 5, margin = 15;
+    if (dt < 8) return false;              // measure for a while first
+    const r = ((ready - en.first.readyMs / 1000) / dt) * 0.8; // song seconds made per second
+    const startIn = 5, margin = 20;
     if (ready + r * startIn < margin) return false;
     return (dur - ready) / Math.max(r, 1e-6) <= dur + startIn - margin;
   }
@@ -102,18 +110,34 @@
     return [mk(e.inst), mk(e.voc)];
   }
 
-  /** More audio is ready: swap it in (every 20 s of new audio, or at the end), resume if starved. */
+  /** Newly timed lines go to the screen and the phones. */
+  function updateEarlyLyrics(en: EarlyEntry) {
+    const ly = en.made?.lyrics ?? en.e.lyrics;
+    if (!ly || (en.made ? en.lyricLines === Infinity : ly.lines.length <= en.lyricLines)) return;
+    en.lyricLines = en.made ? Infinity : ly.lines.length;
+    rawLyrics = ly;
+    lyrics = shiftLyrics(ly, songOffset);
+    sendLyrics();
+  }
+
+  /** More is ready: swap in the audio (when 40 s more is ready, when the loaded part runs low,
+   *  or at the end: each swap copies the whole song so far, so not too often), new lyric lines,
+   *  and resume if playback had to wait. */
   function extendEarly(id: string) {
     const en = earlyJobs.get(id);
     if (!en || earlyLoaded !== id) return;
     const { e } = en, n = e.inst[0].length;
+    updateEarlyLyrics(en);
     const done = e.ready >= n;
-    const wantMs = engine.positionMs() + 8000;
-    if (!done && e.ready - en.extendedTo < e.sampleRate * 20 && !(starved && (e.ready * 1000) / e.sampleRate >= wantMs)) return;
-    const [inst, voc] = earlyBuffers(e, e.ready);
-    en.extendedTo = e.ready;
-    engine.extend(inst, voc, !done);
-    if (starved && (done || (e.ready * 1000) / e.sampleRate >= wantMs)) {
+    const canResume = starved && (readyMs(en) >= engine.positionMs() + 8000 || readyMs(en) >= e.durationMs);
+    const loadedLeftS = en.extendedTo / e.sampleRate - engine.positionMs() / 1000;
+    const more = e.ready - en.extendedTo;
+    if (done || more >= e.sampleRate * 40 || (more > e.sampleRate * 2 && loadedLeftS < 15) || (canResume && more > 0)) {
+      const [inst, voc] = earlyBuffers(e, e.ready);
+      en.extendedTo = e.ready;
+      engine.extend(inst, voc, !done);
+    }
+    if (canResume) {
       starved = false;
       engine.play(engine.positionMs());
       playing = true;
@@ -121,11 +145,24 @@
     }
   }
 
+  /** Called 4× a second: never let the singer get past the timed words. */
+  function guardEarly() {
+    if (!earlyLoaded || !playing || starved) return;
+    const en = earlyJobs.get(earlyLoaded);
+    if (!en || en.made) return;
+    if (engine.positionMs() > readyMs(en) - 1500 && readyMs(en) < en.e.durationMs) {
+      engine.pause();
+      playing = false;
+      starved = true;
+      publish();
+    }
+  }
+
   function onEarly(job: { queueItemId: string; title: string }, e: EarlySong) {
     let en = earlyJobs.get(job.queueItemId);
-    if (!en) { en = { e, title: job.title, playableSent: false, extendedTo: 0 }; earlyJobs.set(job.queueItemId, en); }
+    if (!en) { en = { e, title: job.title, playableSent: false, extendedTo: 0, lyricLines: 0 }; earlyJobs.set(job.queueItemId, en); }
     en.e = e;
-    if (!en.first && e.ready > 0) en.first = { t: performance.now(), ready: e.ready };
+    if (!en.first && e.ready > 0) en.first = { t: performance.now(), readyMs: readyMs(en) };
     if (!en.playableSent && safeToStart(en) && queue.some((q) => q.id === job.queueItemId)) {
       en.playableSent = true;
       conn?.send({ type: 'queue.playable', itemId: job.queueItemId });
@@ -140,10 +177,6 @@
     en.made = song;
     en.e.ready = en.e.inst[0].length;
     extendEarly(job.queueItemId);
-    // the word-timed lyrics replace the line timing
-    rawLyrics = song.lyrics;
-    lyrics = shiftLyrics(song.lyrics, songOffset);
-    sendLyrics();
   }
 
   function onFailed(job: { queueItemId: string; title: string }, message: string) {
@@ -223,6 +256,7 @@
     en.extendedTo = e.ready;
     engine.load(inst, voc, e.ready < n);
     const lyr = en.made?.lyrics ?? e.lyrics ?? { version: 1, lines: [] };
+    en.lyricLines = en.made ? Infinity : lyr.lines.length;
     media = { manifest: { id: '', title: item.title, artist: item.artist, durationMs: e.durationMs,
       files: { instrumental: 'instrumental', vocals: 'vocals', lyrics: 'lyrics.json' } } as any,
       urls: { lyrics: '', vocals: 'local' } };
@@ -416,7 +450,13 @@
 
   // engine fields aren't reactive: copy them on a timer
   let dur = $state(0);
-  const posTimer = setInterval(() => { pos = engine.positionMs(); dur = engine.durationMs; }, 250);
+  const posTimer = setInterval(() => {
+    pos = engine.positionMs();
+    // a song still being made shows its full length, not the part that is ready
+    const en = earlyLoaded ? earlyJobs.get(earlyLoaded) : undefined;
+    dur = en ? en.e.durationMs : engine.durationMs;
+    guardEarly();
+  }, 250);
   // guests follow the clock between updates; changes (play, seek, …) are published right away
   const pubTimer = setInterval(() => { if (playing) publish(); }, 10000);
 
