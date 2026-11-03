@@ -26,7 +26,10 @@
   ],
   // Custom domain: uncomment after adding the domain to Cloudflare
   // "routes": [{ "pattern": "karaoke.example.com", "custom_domain": true }],
-  "observability": { "enabled": true }
+  // Every request and WebSocket message is logged by default: one party filled the free daily
+  // log allowance (0.5 GB). Keep 5% of them (enough to spot problems), and keep tokens, room keys
+  // and lyrics searches out of the logs.
+  "observability": { "enabled": true, "head_sampling_rate": 0.05, "redact_query_string": true }
   // Secrets (wrangler secret put):
   //   MEDIA_SECRET  random string used to sign media URLs (required)
   //   SIGNUP_CODE   if set, creating a library account requires this code
