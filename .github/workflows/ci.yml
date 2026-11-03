@@ -36,7 +36,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - uses: astral-sh/setup-uv@v6
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: npm ci && npm install --no-save playwright && npx playwright install --with-deps chromium
+      - run: npm ci && npx playwright install --with-deps chromium
       - run: cd maker && uv sync
       - run: npm run test:e2e
         env: { JOJO_E2E_STRICT: '1' }
