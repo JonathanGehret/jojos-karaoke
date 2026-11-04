@@ -158,7 +158,9 @@ const ASSET_NAME = /^\/assets\/([\w.-]+)$/;
  *  before each deploy) instead of the start page, which made the song maker crash. */
 async function appAsset(req: Request, env: Env, url: URL): Promise<Response> {
   const r = await env.ASSETS.fetch(req);
-  if (r.ok && !(r.headers.get('content-type') ?? '').includes('text/html')) return r;
+  // a live file (also "304 not modified"); a missing one comes back as the start page or a 404
+  const missing = r.status === 404 || (r.ok && (r.headers.get('content-type') ?? '').includes('text/html'));
+  if (!missing) return r;
   const name = url.pathname.match(ASSET_NAME)?.[1];
   const obj = name ? await env.LIBRARY.get(`app-assets/${name}`) : null;
   if (!obj) return new Response('not found', { status: 404 });
