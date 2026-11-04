@@ -45,6 +45,9 @@ export const store = {
   addRecentRoom(code: string) { set('jk.recentRooms', [code, ...this.recentRooms.filter((c) => c !== code)].slice(0, 5)); },
   get vocal(): number { return get('jk.vocal', 0); },
   set vocal(v: number) { set('jk.vocal', v); },
+  /** the server's signup code, once entered correctly (hosting and libraries need it) */
+  get signupCode(): string { return get('jk.signupCode', ''); },
+  set signupCode(v: string) { set('jk.signupCode', v); },
   get volume(): number { return get('jk.volume', 1); },
   set volume(v: number) { set('jk.volume', v); },
   /** the host screen makes guests' requests itself (on unless switched off once) */

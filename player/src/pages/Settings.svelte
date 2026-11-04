@@ -11,7 +11,7 @@
   let token = $state(store.ownerToken);
   let who = $state<{ name: string; role: string } | null>(null);
   let name = $state('');
-  let signupCode = $state('');
+  let signupCode = $state(store.signupCode);
   let pasted = $state('');
   let songs = $state<SongSummary[]>([]);
   let tokens = $state<{ id: string; name: string; role: string }[]>([]);
@@ -40,6 +40,7 @@
     error = null;
     try {
       const r = await api.signUp(name.trim(), signupCode.trim() || undefined);
+      if (signupCode.trim()) store.signupCode = signupCode.trim();
       store.ownerToken = token = r.token;
       await refresh();
       if (setup) navigate('/');

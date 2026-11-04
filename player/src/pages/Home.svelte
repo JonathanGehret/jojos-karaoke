@@ -15,12 +15,14 @@
     try {
       let r;
       try {
-        r = await createRoom(store.ownerToken, store.nickname || undefined);
+        r = await createRoom(store.ownerToken, store.nickname || undefined, store.signupCode || undefined);
       } catch (e) {
         if ((e as { status?: number }).status !== 403) throw e;
-        const code = prompt('This server needs a signup code to host a party:');
+        const code = prompt(store.signupCode ? 'That signup code no longer works. Enter the new one:'
+          : 'This server needs a signup code to host a party (ask whoever runs it):')?.trim();
         if (!code) return;
         r = await createRoom(store.ownerToken, store.nickname || undefined, code);
+        store.signupCode = code; // remembered on this device: no need to type it again
       }
       store.setAdminToken(r.code, r.adminToken);
       store.setWorkerKey(r.code, r.workerKey);
