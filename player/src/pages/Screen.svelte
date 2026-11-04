@@ -250,6 +250,7 @@
     keepAwake();
     if (store.makeHere && !runner && admin) toggleMakingHere(); // the host makes requests by default
     publishDeviceSongs();
+    syncResults();
     if (nowItem && nowItem.id !== loadedItem?.id) load(nowItem);
   }
 
@@ -382,13 +383,36 @@
     if (!r.ok) throw new Error(`could not fetch the finished request (${r.status})`);
     return importJkp(new Uint8Array(await r.arrayBuffer()));
   }
-  // finished requests are copied into this device's songs as soon as they are ready
+  // finished requests are copied into this device's songs ("My songs"): every one the room
+  // has, so none is lost (the screen was reloaded, or the song was already playing when it
+  // finished). Each is downloaded once per device.
+  const importedKey = `jk.imported.${code}`;
+  const imported = new Set<string>(JSON.parse(localStorage.getItem(importedKey) ?? '[]'));
+  let syncing = false;
+  async function syncResults() {
+    if (syncing || !admin) return;
+    syncing = true;
+    try {
+      const r = await fetch(`/api/rooms/${code}/results?admin=${encodeURIComponent(admin)}`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return;
+      const { results } = await r.json() as { results: { queueItemId: string }[] };
+      for (const { queueItemId } of results) {
+        if (imported.has(queueItemId) || importing.has(queueItemId)) continue;
+        importing.add(queueItemId);
+        try {
+          await importResult(queueItemId);
+          imported.add(queueItemId);
+          localStorage.setItem(importedKey, JSON.stringify([...imported]));
+        } catch (e) { say((e as Error).message); }
+        finally { importing.delete(queueItemId); }
+      }
+    } catch { /* offline for a moment: the next finished request tries again */ }
+    finally { syncing = false; }
+  }
   $effect(() => {
-    for (const q of queue) {
-      if (!q.hasResult || !q.songId || importing.has(q.id)) continue;
-      importing.add(q.id);
-      getSong(q.songId).then((have) => have ?? importResult(q.id)).catch((e) => say((e as Error).message));
-    }
+    // a request finished (in the queue or already playing): copy it
+    const done = [...queue, ...(nowItem ? [nowItem] : [])].filter((q) => q.hasResult).map((q) => q.id).join();
+    if (started && done) syncResults();
   });
 
   function nudgeOffset(ms: number) {

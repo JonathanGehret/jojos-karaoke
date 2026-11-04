@@ -49,6 +49,7 @@ Close codes: `4403` removed from the room, `4404` room closed.
 - `GET /api/rooms/{CODE}/uploads/{id}` (worker, Bearer key) → the upload
 - `POST /api/rooms/{CODE}/results/{jobId}` (worker) `.jkp` body → then `job.done`
 - `GET /api/rooms/{CODE}/results/{jobId|queueItemId}?admin=…|member=…` → the `.jkp` (host or the requester only)
+- `GET /api/rooms/{CODE}/results?admin=…` → `{ results: [{ queueItemId, jobId }] }` (host: every finished request, to copy into its device songs)
 - `GET /api/rooms/{CODE}/songs/{id}/media?member=…|admin=…` → manifest + signed URLs
   (6 h). Guests get lyrics and cover only; audio is for the host.
 - `PUT /api/rooms/{CODE}/songs/{id}/lyrics?admin=…` `{ lyrics, offsetMs? }` → saves edits

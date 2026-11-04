@@ -333,6 +333,10 @@ describe('rooms without an account (songs on the screen device)', () => {
     const done = await screen.state((s) => s.nowPlaying?.id === reqItem.id && s.nowPlaying.status === 'ready');
     expect(done.nowPlaying).toMatchObject({ songId: 'nobody-brought-along-bbbbbb', hasResult: true });
 
+    // the host can list the finished requests (to copy them onto its device); guests can't
+    expect((await api(`/api/rooms/${c}/results?admin=${adm}`)).body.results).toEqual([{ queueItemId: reqItem.id, jobId: job.id }]);
+    expect((await api(`/api/rooms/${c}/results?admin=wrong`)).status).toBe(403);
+
     // the requester and the host can download the package; others can't
     const mine = await api(`/api/rooms/${c}/results/${reqItem.id}?member=${beaTok}`);
     expect(mine.status).toBe(200);

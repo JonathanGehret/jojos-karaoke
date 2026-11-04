@@ -89,6 +89,12 @@ export class Room extends DurableObject<Env> {
     if (a === 'uploads' && b && req.method === 'GET') return this.downloadUpload(req, url, b);
     if (a === 'results' && b && req.method === 'POST') return this.putResult(req, url, b);
     if (a === 'results' && b && req.method === 'GET') return this.getResult(url, b);
+    if (a === 'results' && !b && req.method === 'GET') {
+      // the host's screen copies every finished request into its device songs, also ones it
+      // missed (it was reloaded, or the song was already playing when it finished)
+      await this.requireAdmin(url.searchParams.get('admin'));
+      return json({ results: this.s.results.map((r) => ({ queueItemId: r.queueItemId, jobId: r.jobId })) });
+    }
     if (a === 'songs' && b && c === 'media' && req.method === 'GET') return this.media(url, b);
     if (a === 'songs' && b && c === 'lyrics' && req.method === 'PUT') return this.saveLyrics(req, url, b);
     if (a === 'close' && req.method === 'POST') {
