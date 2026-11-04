@@ -45,6 +45,8 @@ export const store = {
   addRecentRoom(code: string) { set('jk.recentRooms', [code, ...this.recentRooms.filter((c) => c !== code)].slice(0, 5)); },
   get vocal(): number { return get('jk.vocal', 0); },
   set vocal(v: number) { set('jk.vocal', v); },
+  get volume(): number { return get('jk.volume', 1); },
+  set volume(v: number) { set('jk.volume', v); },
   /** the host screen makes guests' requests itself (on unless switched off once) */
   get makeHere(): boolean { return get('jk.makeHere', true); },
   set makeHere(v: boolean) { set('jk.makeHere', v); },

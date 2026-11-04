@@ -58,6 +58,8 @@ export interface EarlySong {
   lyrics: Lyrics | null;
   /** word timing is final up to here (ms): playback must stay behind it */
   alignedMs: number;
+  /** why it can't start early (it then plays when finished), or null */
+  waitReason: string | null;
 }
 
 export interface MadeSong {
@@ -187,6 +189,7 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
   if (o.separate !== false) {
     const emit = () => {
       if (!early) return;
+      if (aligner?.failed && !early.waitReason) early.waitReason = 'word timing failed while making';
       early.lyrics = aligner && !aligner.failed ? aligner.lyrics() : null;
       early.alignedMs = aligner && !aligner.failed ? aligner.alignedMs : 0;
       try { o.onEarly?.(early); } catch { /* early playback must never break making the song */ }
@@ -197,7 +200,15 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
     };
     const startAligner = (ls: LyricLine[]) => {
       // exact word timing while making needs synced lyrics; otherwise the song waits until done
-      if (!early || o.asr === false || !ProgressiveAligner.supports(ls) || !alignable(ls, o.language)) return;
+      if (early) {
+        early.waitReason = o.asr === false ? 'AI word timing is off'
+          : !ls.length ? 'no lyrics found'
+          : !ProgressiveAligner.supports(ls) ? 'these lyrics have no line times'
+          : !alignable(ls, o.language) ? 'word timing while making works for English-alphabet lyrics only'
+          : null;
+        if (early.waitReason) emit();
+      }
+      if (!early || early.waitReason) return;
       alignerLines = ls;
       aligner = new ProgressiveAligner(ls, sampleRate, left.length, durationMs, async (audio) => {
         const r = await makerWorker.call({ type: 'logits', audio, model: o.alignModel ?? ALIGN_MODEL }, [audio.buffer], undefined, o.signal);
@@ -210,7 +221,7 @@ export async function makeSong(file: Blob, o: MakeOptions): Promise<MadeSong> {
       const n = left.length;
       early = { sampleRate, durationMs, ready: 0, startedAt: performance.now(),
         inst: [new Float32Array(n), new Float32Array(n)], voc: [new Float32Array(n), new Float32Array(n)],
-        lyrics: null, alignedMs: 0 };
+        lyrics: null, alignedMs: 0, waitReason: null };
       if (given) startAligner(given);
       else lookupEarly?.then((f) => { if (!aligner) startAligner(f.lines); });
     }

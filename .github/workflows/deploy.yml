@@ -40,6 +40,10 @@ jobs:
         if: steps.cfg.outputs.skip != '1'
         working-directory: room-worker
         run: node scripts/upload-runtime.mjs ${SITE_URL:+--skip-if-live "$SITE_URL"}
+      - name: Keep the live app files in R2 (open tabs of this version keep working)
+        if: steps.cfg.outputs.skip != '1' && env.SITE_URL != ''
+        working-directory: room-worker
+        run: node scripts/keep-assets.mjs "$SITE_URL"
       - name: Deploy the Worker
         if: steps.cfg.outputs.skip != '1'
         working-directory: room-worker

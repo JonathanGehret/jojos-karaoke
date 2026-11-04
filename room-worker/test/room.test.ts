@@ -362,6 +362,12 @@ describe('browser maker assets', () => {
     w.close();
   });
 
+  it('an app file that no longer exists is a 404, not the start page (old tabs would crash on it)', async () => {
+    const r = await fetch(base() + '/assets/make.worker-gone123.js');
+    expect(r.status).toBe(404);
+    expect(r.headers.get('content-type') ?? '').not.toContain('text/html');
+  });
+
   it('only proxies allow-listed Hugging Face files', async () => {
     expect((await api('/api/hf/someone/else/resolve/main/config.json')).status).toBe(404);
     expect((await api('/api/hf/Xenova/whisper-small/resolve/dev/config.json')).status).toBe(404);

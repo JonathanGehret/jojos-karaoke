@@ -4,11 +4,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   // The player PWA is served from the same Worker, so API and WebSockets are same-origin.
+  // /assets/* goes through the Worker too: files of older app versions come from R2 (open tabs).
   "assets": {
     "directory": "../player/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/assets/*"]
   },
   "durable_objects": {
     "bindings": [

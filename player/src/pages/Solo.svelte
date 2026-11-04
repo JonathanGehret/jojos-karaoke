@@ -23,6 +23,7 @@
   let key = $state(0);
   let rate = $state(1);
   let vocal = $state(store.vocal);
+  let volume = $state(store.volume);
   let offset = $state(0);
 
   async function open(e: Event) {
@@ -44,6 +45,7 @@
     const v = pkg.manifest.files.vocals ? await decode(bufferOf(pkg.files[pkg.manifest.files.vocals])) : null;
     engine.load(inst, v);
     engine.setVocal(vocal);
+    engine.setVolume(volume);
     engine.onEnded = () => (playing = false);
     offset = pkg.manifest.offsetMs ?? 0;
     lyrics = shiftLyrics(pkg.lyrics, offset);
@@ -99,6 +101,8 @@
         <button class="primary play" onclick={toggle} aria-label={playing ? 'Pause' : 'Play'}>{#if playing}<Pause size={26} />{:else}<Play size={26} />{/if}</button>
         <span class="group">Key <button onclick={() => engine.setKey(--key)} aria-label="Key down"><Minus size={16} /></button><b>{key > 0 ? '+' : ''}{key}</b><button onclick={() => engine.setKey(++key)} aria-label="Key up"><Plus size={16} /></button></span>
         <span class="group">Tempo <button onclick={() => { rate = Math.max(0.8, rate - 0.05); engine.setRate(rate); }} aria-label="Slower"><Minus size={16} /></button><b>{Math.round(rate * 100)}%</b><button onclick={() => { rate = Math.min(1.2, rate + 0.05); engine.setRate(rate); }} aria-label="Faster"><Plus size={16} /></button></span>
+        <label class="group">Volume <input type="range" min="0" max="1" step="0.05" bind:value={volume}
+          oninput={() => { engine.setVolume(volume); store.volume = volume; }} aria-label="Volume" /></label>
         <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" bind:value={vocal}
           oninput={() => { engine.setVocal(vocal); store.vocal = vocal; }} disabled={!pkg?.manifest.files.vocals} /></label>
         <span class="group">Lyrics <button onclick={() => { offset -= 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }} aria-label="Lyrics earlier"><Minus size={16} /></button><b>{offset} ms</b><button onclick={() => { offset += 50; lyrics = shiftLyrics(pkg!.lyrics, offset); }} aria-label="Lyrics later"><Plus size={16} /></button></span>

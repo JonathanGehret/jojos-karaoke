@@ -49,6 +49,7 @@
   let key = $state(0);
   let rate = $state(1);
   let vocal = $state(store.vocal);
+  let volume = $state(store.volume);
   let songOffset = $state(0);
   let offsetDirty = $state(false);
   let showQueue = $state(true);
@@ -69,6 +70,7 @@
   let runner: BrowserJobRunner | null = null;
   let makingHere = $state(false);
   let makingJob = $state<string | null>(null);
+  let makingNote = $state<string | null>(null);   // whether/why the request can start early
 
   // ---- playing a request while this device is still making it (spec/protocol.md)
   interface EarlyEntry { e: EarlySong; title: string; first?: { t: number; readyMs: number }; playableSent: boolean;
@@ -162,6 +164,9 @@
     let en = earlyJobs.get(job.queueItemId);
     if (!en) { en = { e, title: job.title, playableSent: false, extendedTo: 0, lyricLines: 0 }; earlyJobs.set(job.queueItemId, en); }
     en.e = e;
+    makingNote = e.waitReason ? `starts when finished: ${e.waitReason}`
+      : en.playableSent || earlyLoaded === job.queueItemId ? 'can start already'
+      : 'starts early as soon as it is far enough ahead';
     if (!en.first && e.ready > 0) en.first = { t: performance.now(), readyMs: readyMs(en) };
     if (!en.playableSent && safeToStart(en) && queue.some((q) => q.id === job.queueItemId)) {
       en.playableSent = true;
@@ -198,7 +203,7 @@
     if (runner) { runner.stop(); runner = null; makingHere = false; makingJob = null; store.makeHere = false; return; }
     store.makeHere = true;
     runner = new BrowserJobRunner(code, admin!, {
-      onJob: (j, p) => (makingJob = j ? `${j.title} ${Math.round(p ?? 0)}%` : null),
+      onJob: (j, p) => (makingJob = j ? `${j.title} ${Math.round(p ?? 0)}%` : null, makingNote = j ? makingNote : null),
       onEarly, onMade, onFailed,
     });
     runner.start();
@@ -239,6 +244,7 @@
       if (!engine.pitchShift) say('Key change is not supported in this browser; tempo will shift the pitch.');
     }
     engine.setVocal(vocal);
+    engine.setVolume(volume);
     engine.onEnded = () => { playing = false; publish(); endedId = loadedItem?.id ?? null; endedTries = 0; conn?.send({ type: 'advance' }); };
     started = true;
     keepAwake();
@@ -353,6 +359,7 @@
   function setKey(k: number) { key = Math.max(-KEY_RANGE, Math.min(KEY_RANGE, k)); engine.setKey(key); publish(); }
   function setRate(r: number) { rate = Math.round(Math.max(0.8, Math.min(1.2, r)) * 100) / 100; engine.setRate(rate); publish(); }
   function setVocal(v: number) { vocal = v; store.vocal = v; engine.setVocal(v); publish(); }
+  function setVolume(v: number) { volume = Math.round(Math.max(0, Math.min(1, v)) * 100) / 100; store.volume = volume; engine.setVolume(volume); }
   let lyricsTimer = 0;
   /** Guests get the lyrics from the screen, already shifted by the song's offset. */
   function sendLyrics() {
@@ -479,6 +486,8 @@
     else if (k === ']') setRate(rate + 0.05);
     else if (k === '[') setRate(rate - 0.05);
     else if (k === 'v' || k === 'V') setVocal(vocal > 0 ? 0 : 0.6);
+    else if (k === 'ArrowUp') { e.preventDefault(); setVolume(volume + 0.1); }
+    else if (k === 'ArrowDown') { e.preventDefault(); setVolume(volume - 0.1); }
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else if (k === 'q' || k === 'Q') showQueue = !showQueue;
     else if (k === ',') nudgeOffset(-50);
@@ -539,7 +548,7 @@
           <button class="primary big" onclick={start}><Play size={22} />Start the party</button>
           <div class="keys" aria-label="Keyboard shortcuts">
             <span><kbd>Space</kbd>play/pause</span><span><kbd>N</kbd>skip</span><span><kbd>←</kbd><kbd>→</kbd>seek</span>
-            <span><kbd>+</kbd><kbd>−</kbd>key</span><span><kbd>[</kbd><kbd>]</kbd>tempo</span><span><kbd>V</kbd>guide vocal</span>
+            <span><kbd>+</kbd><kbd>−</kbd>key</span><span><kbd>[</kbd><kbd>]</kbd>tempo</span><span><kbd>V</kbd>guide vocal</span><span><kbd>↑</kbd><kbd>↓</kbd>volume</span>
             <span><kbd>F</kbd>fullscreen</span><span><kbd>Q</kbd>queue</span><span><kbd>,</kbd><kbd>.</kbd>lyrics offset</span>
           </div>
         </div>
@@ -592,6 +601,8 @@
               <button class="icon" onclick={skip} title="Skip (N)" aria-label="Skip"><SkipForward size={20} /></button>
               <span class="group">Key <button onclick={() => setKey(key - 1)} aria-label="Key down"><Minus size={16} /></button><b>{key > 0 ? '+' : ''}{key}</b><button onclick={() => setKey(key + 1)} aria-label="Key up"><Plus size={16} /></button></span>
               <span class="group">Tempo <button onclick={() => setRate(rate - 0.05)} aria-label="Slower"><Minus size={16} /></button><b>{Math.round(rate * 100)}%</b><button onclick={() => setRate(rate + 0.05)} aria-label="Faster"><Plus size={16} /></button></span>
+              <label class="group">Volume <input type="range" min="0" max="1" step="0.05" value={volume}
+                     oninput={(e) => setVolume(+(e.target as HTMLInputElement).value)} aria-label="Volume" /></label>
               <label class="group">Guide vocal <input type="range" min="0" max="1" step="0.05" value={vocal}
                      oninput={(e) => setVocal(+(e.target as HTMLInputElement).value)} disabled={!media?.urls.vocals} /></label>
               <span class="group">Lyrics <button onclick={() => nudgeOffset(-50)} aria-label="Lyrics earlier"><Minus size={16} /></button><b>{songOffset} ms</b><button onclick={() => nudgeOffset(50)} aria-label="Lyrics later"><Plus size={16} /></button>
@@ -656,7 +667,7 @@
         {/if}
         <div class="box">
           <label class="row"><input type="checkbox" checked={makingHere} onchange={toggleMakingHere} /> Make requests on this device</label>
-          {#if makingJob}<p class="hint">Making {makingJob}</p>{/if}
+          {#if makingJob}<p class="hint">Making {makingJob}{#if makingNote} · {makingNote}{/if}</p>{/if}
           {#if store.workerKey(code)}
             <details>
               <summary>Let another computer make requests</summary>

@@ -88,6 +88,15 @@ async function doSeparate(m: Extract<ToWorker, { type: 'separate' }>) {
     [res.instL.buffer, res.instR.buffer, res.vocL.buffer, res.vocR.buffer]);
 }
 
+/** Is this Hugging Face model already in transformers.js' browser cache? (It reports
+ *  "download" even when it reads from there, so the page would say "Downloading" every time.) */
+async function hfCached(model: string): Promise<boolean> {
+  try {
+    const keys = await (await caches.open('transformers-cache')).keys();
+    return keys.some((r) => r.url.includes(`/${model}/`) && r.url.endsWith('.onnx'));
+  } catch { return false; }
+}
+
 let asr: { model: string; p: any; backend: string } | null = null;
 
 async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
@@ -99,12 +108,11 @@ async function doTranscribe(m: Extract<ToWorker, { type: 'transcribe' }>) {
   if (asr?.model !== m.model) {
     const gpu = await hasWebGpu();
     const files = new Map<string, number>();
-    let fromNetwork = false; // transformers.js reports 'download' only for files not in its cache
+    const fromNetwork = !(await hfCached(m.model));
     const p = await tf.pipeline('automatic-speech-recognition', m.model, {
       device: gpu ? 'webgpu' : 'wasm',
       dtype: gpu ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } as any : 'q8',
       progress_callback: (e: any) => {
-        if (e.status === 'download') fromNetwork = true;
         if (e.status === 'progress' && e.file) {
           files.set(e.file, e.progress ?? 0);
           const avg = [...files.values()].reduce((a, b) => a + b, 0) / (files.size * 100);
@@ -162,11 +170,10 @@ async function getCtc(model: string, id: number): Promise<Ctc> {
     const adapter = await (navigator as any).gpu?.requestAdapter().catch(() => null);
     const f16 = !!adapter?.features?.has('shader-f16');
     const files = new Map<string, number>();
-    let fromNetwork = false;
+    const fromNetwork = !(await hfCached(model));
     const m = await tf.AutoModelForCTC.from_pretrained(model, {
       device: f16 ? 'webgpu' : 'wasm', dtype: f16 ? 'fp16' : 'q8',
       progress_callback: (e: any) => {
-        if (e.status === 'download') fromNetwork = true;
         if (e.status === 'progress' && e.file) {
           files.set(e.file, e.progress ?? 0);
           const avg = [...files.values()].reduce((a, b) => a + b, 0) / (files.size * 100);

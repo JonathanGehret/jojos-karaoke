@@ -151,9 +151,30 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
   throw new HttpError(404, 'not found');
 }
 
+const ASSET_NAME = /^\/assets\/([\w.-]+)$/;
+
+/** App files have hashed names that change with each deploy. A tab still running an older
+ *  version asks for its own files: serve those from R2 (kept there by scripts/keep-assets.mjs
+ *  before each deploy) instead of the start page, which made the song maker crash. */
+async function appAsset(req: Request, env: Env, url: URL): Promise<Response> {
+  const r = await env.ASSETS.fetch(req);
+  if (r.ok && !(r.headers.get('content-type') ?? '').includes('text/html')) return r;
+  const name = url.pathname.match(ASSET_NAME)?.[1];
+  const obj = name ? await env.LIBRARY.get(`app-assets/${name}`) : null;
+  if (!obj) return new Response('not found', { status: 404 });
+  return new Response(obj.body, { headers: {
+    'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+    'cache-control': 'public, max-age=31536000, immutable',
+    // same isolation headers as the live files (the song maker runs as a worker from these)
+    'cross-origin-embedder-policy': 'credentialless', 'cross-origin-opener-policy': 'same-origin',
+    'cross-origin-resource-policy': 'same-origin',
+  } });
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname.startsWith('/assets/')) return appAsset(req, env, url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
     try {
       return await route(req, env, url, ctx);

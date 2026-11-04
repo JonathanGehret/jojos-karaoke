@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "node scripts/upload-runtime.mjs && wrangler deploy",
+    "deploy": "node scripts/upload-runtime.mjs && node scripts/keep-assets.mjs && wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "upload-runtime": "node scripts/upload-runtime.mjs"
