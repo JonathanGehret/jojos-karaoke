@@ -134,3 +134,17 @@ JOJO_E2E_REAL_MODEL=1 node player/e2e/maker.mjs   # same, with the real 67 MB se
 
 The e2e test needs Playwright's Chromium and `uv`; it skips without Playwright unless
 `JOJO_E2E_STRICT=1` (CI sets it).
+
+## How it was built
+
+Written by AI coding agents (mainly Claude Code) under my direction: I set the idea and goals, steered the agents,
+decided what stays, and tested the result. Design decisions are in [docs/DESIGN.md](docs/DESIGN.md).
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE): free to use, copy, change and share for any **noncommercial** purpose,
+including personal use, hobby projects, and use by schools, charities and research organisations.
+**Selling it or using it to make money is not allowed** without my permission. If you'd like to use it commercially, ask me.
+
+The separation and speech models it downloads (MDX-Net, RoFormer, Whisper) are other people's work and keep their own licenses.
+

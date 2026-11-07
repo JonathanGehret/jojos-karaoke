@@ -28,5 +28,6 @@
     "vite": "^8.3.0",
     "vite-plugin-pwa": "^2.0.0",
     "vitest": "^5.1.0"
-  }
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
 }

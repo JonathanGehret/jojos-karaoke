@@ -14,5 +14,6 @@
     "typescript": "^5.9.0",
     "vitest": "^5.1.0",
     "wrangler": "^4.156.2"
-  }
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
 }
