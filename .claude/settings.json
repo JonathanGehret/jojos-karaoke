@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "cloudflare-wrangler@gehret-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "gehret-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "JonathanGehret/claude-plugins"
+      }
+    }
+  }
+}
