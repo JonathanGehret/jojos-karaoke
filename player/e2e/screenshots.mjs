@@ -4,7 +4,7 @@
 // usage: npm run build && node player/e2e/screenshots.mjs [out dir, default: out/screenshots]
 // Needs Playwright's Chromium and ffmpeg.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
+import { mkdtempSync, readFileSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -163,7 +163,7 @@ try {
   await at(disco.lines[8].start);
   await hostCtx.close(); // flushes the video
   const vid = readdirSync(videoDir).find((f) => f.endsWith('.webm'));
-  if (vid) renameSync(join(videoDir, vid), join(out, 'host_raw.webm'));
+  if (vid) copyFileSync(join(videoDir, vid), join(out, 'host_raw.webm')); // copy: the temp dir may be on another drive
   console.log('done', readdirSync(out).join(' '));
 } catch (e) {
   console.error(e);
