@@ -13,6 +13,14 @@ Turn songs you own into karaoke, then sing them together.
 - **Room server** (`room-worker/`): Cloudflare Worker + Durable Objects + R2. Rooms, queue,
   clock sync, on-the-spot processing jobs, and an optional private online library.
 
+<p>
+  <img src="docs/media/host_singing.png" alt="Host screen: room code with QR, the song, and two lyric lines with the sung words wiped in pink" width="68%">
+  <img src="docs/media/guest_singing.png" alt="A guest's phone: 'Your turn', the same lyrics in sync, reactions and tabs for songs, queue and requests" width="22%">
+</p>
+
+*The host screen and a guest's phone during a song (invented demo song). Regenerate with
+`node player/e2e/screenshots.mjs`.*
+
 **Your songs live on your device.** Every song you make is saved in the app (*My songs*,
 browser storage) and can be downloaded as a `.jkp` file, imported elsewhere, or (optionally)
 uploaded to an online library. No account is needed to make songs or host a party.
